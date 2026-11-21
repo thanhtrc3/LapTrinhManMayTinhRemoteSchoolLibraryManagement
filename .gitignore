@@ -1,0 +1,21 @@
+# Build & Output
+bin/
+target/
+out/
+*.class
+
+# IDE & Editor
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Runtime data files (optional)
+*.log
