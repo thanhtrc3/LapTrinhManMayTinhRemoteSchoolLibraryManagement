@@ -1,4 +1,4 @@
-# BẢN ĐẶC TẢ KỸ THUẬT VÀ KIẾN TRÚC HỆ THỐNG (CẬP NHẬT ĐẦY ĐỦ)
+# BẢN ĐẶC TẢ KỸ THUẬT VÀ KIẾN TRÚC HỆ THỐNG TOÀN DIỆN
 ## Đề tài: Hệ thống Quản lý Mượn/Trả Sách Thư viện Trường học (Remote School Library Management)
 **Học phần:** Lập trình Mạng Máy tính (Computer Network Programming)
 
@@ -6,199 +6,92 @@
 
 ## 1. TỔNG QUAN HỆ THỐNG & MỤC TIÊU
 - **Tên hệ thống:** Remote School Library Management System.
-- **Mục tiêu:** Xây dựng hệ thống quản lý mượn/trả sách, quản lý tài khoản, tựa sách và từng bản sao vật lý từ xa theo mô hình Khách/Chủ (Client/Server) hoạt động trên nền tảng mạng máy tính (LAN / Wi-Fi / Localhost).
-- **Phạm vi nghiệp vụ toàn diện:** Quản lý tài khoản, tựa sách và từng bản sao (copies), tìm kiếm, mượn, trả, **gia hạn (renew)**, **đặt trước (reserve)**, kiểm tra số lượng khả dụng realtime, **tính quá hạn (overdue)** và **xử lý an toàn đa luồng đồng thời (concurrent thread-safe)**.
-- **Nền tảng công nghệ:** Java thuần (JDK 17+ hoặc JDK 21+), Java TCP Socket (`ServerSocket` & `Socket`), Java Object Serialization, Java Swing GUI, không phụ thuộc framework web hay cơ sở dữ liệu bên ngoài.
+- **Mục tiêu:** Xây dựng hệ thống quản lý mượn/trả sách, quản lý tài khoản, tựa sách và từng bản sao vật lý từ xa theo mô hình Khách/Chủ (Client/Server) hoạt động trên nền tảng mạng máy tính (LAN / Wi-Fi / Localhost / Internet qua TCP Tunnel).
+- **Phạm vi công nghệ mạng chuẩn giáo trình môn học:**
+  - **TCP Socket đa luồng (Bài 5 & 6):** Truyền nhận dữ liệu tin cậy, Persistent Connection, Java Object Serialization, Thread Pool (`ExecutorService`), Khóa hạt mịn (`ReentrantLock`).
+  - **Truyền file qua Socket (Bài 5 & 6):** Tải sách điện tử (E-Book PDF/Text) trực tiếp qua luồng byte Socket.
+  - **UDP Socket Broadcast (Bài 4 & 7):** Tự động phát hiện và kết nối Server trong mạng LAN (Auto-Discovery) không cần gõ IP.
+  - **Multicast Socket (Bài 8):** Kênh loa phát thanh thư viện One-to-Many (`224.0.0.100`) phát thông báo tức thì tới toàn bộ máy trạm.
+  - **Quản lý địa chỉ mạng (Bài 4):** Lớp `InetAddress`, phân quyền tải tài liệu nội bộ theo vị trí mạng (`isSiteLocalAddress`).
 
 ---
 
-## 2. KIẾN TRÚC MẠNG & MÔ HÌNH HOẠT ĐỘNG
-### 2.1. Mô hình Client/Server & Multithreading
-- **Server:**
-  - Mở cổng `ServerSocket` (mặc định: `8888`) lắng nghe kết nối đến từ các Client.
-  - Áp dụng mô hình **Concurrent Server (Đa luồng)**: Vòng lặp `serverSocket.accept()` tiếp nhận kết nối và bàn giao mỗi Client cho một tiểu trình `ClientHandler` (thực thi `Runnable`).
-  - Quản lý danh sách kết nối đang hoạt động: `CopyOnWriteArrayList<ClientHandler> activeClients` để đảm bảo an toàn đa luồng khi duyệt broadcast.
-  - Ghi log thời gian thực chi tiết trên Console Server: IP/Port client, thời điểm kết nối, tài khoản đăng nhập, mọi thao tác nghiệp vụ (Mượn, Trả, Gia hạn, Đặt trước, CRUD sách/bản sao), thời điểm ngắt kết nối và số Client đang online.
-- **Client:**
-  - Khởi tạo kết nối `Socket(host, port)` tới Server.
-  - Sử dụng **Persistent Connection**: Duy trì kết nối xuyên suốt phiên làm việc.
-  - Kiến trúc Client chia 2 luồng:
-    1. **Luồng giao diện (UI Event Dispatch Thread):** Xử lý tương tác nút bấm, form nhập, bảng hiển thị không bị nghẽn (non-blocking).
-    2. **Luồng ngầm (Background Listener Thread):** Liên tục lắng nghe gói tin từ Server (`in.readObject()`) để nhận kết quả phản hồi và bắt các sự kiện Realtime Broadcast.
+## 2. KIẾN TRÚC MẠNG & CÔNG NGHỆ TRUYỀN THÔNG
 
-### 2.2. Vị trí & Cấu hình IP/Port
-- **Mặc định:** `Host = 127.0.0.1`, `Port = 8888`.
-- **Cấu hình động:**
-  - Lưu trữ trong tệp `config.properties` ở thư mục chạy ứng dụng.
-  - Trên màn hình Đăng nhập có nút **⚙ Cài đặt kết nối (Settings)**: Có 2 ô nhập Host và Port với placeholder hiển thị `127.0.0.1` và `8888`.
-  - **Quy tắc:** Nếu để trống hoặc xóa sạch ô nhập, hệ thống tự động quay về giá trị mặc định (`127.0.0.1:8888`). Khi nhập giá trị mới và lưu lại, Client sẽ kết nối theo địa chỉ mới.
-  - Tích hợp nút **"Kiểm tra kết nối" (Ping Test)** để kiểm tra trạng thái Server trước khi đăng nhập.
+### 2.1. Động cơ TCP Server & Tối ưu hóa Concurrency
+- **Server:**
+  - Mở cổng `ServerSocket(8888)` tiếp nhận kết nối.
+  - Dùng **Thread Pool (`ExecutorService`)** quản lý các tiểu trình `ClientHandler`, tái sử dụng luồng, tránh sập Server khi hàng trăm Client kết nối đồng thời.
+  - **Khóa hạt mịn (`ReentrantLock` theo từng BookID):** Thay vì khóa toàn bộ Server, mỗi tựa sách có một Lock riêng. Người mượn sách A và người mượn sách B diễn ra hoàn toàn song song. Chỉ khi 2 người cùng mượn 1 cuốn sách cuối cùng thì mới cạnh tranh theo hàng đợi FIFO.
+  - Quản lý danh sách kết nối: `CopyOnWriteArrayList<ClientHandler> activeClients`.
+  - Giám sát thông số mạng: Đo độ trễ (Ping latency), tốc độ truyền file (MB/s), hiển thị IP/port client online trên Console Server.
+- **Client (Ứng dụng Swing):**
+  - Kết nối `Socket` duy trì (Persistent Connection).
+  - Tách 2 luồng: Luồng giao diện (UI Event Dispatch Thread) và Luồng ngầm (Background Listener Thread) liên tục nhận dữ liệu và sự kiện Realtime (`SwingUtilities.invokeLater()`).
+
+### 2.2. Giao thức UDP Auto-Discovery (Dò tìm Server tự động - Bài 7)
+- Phía Server: Mở thêm 1 tiểu trình chạy `DatagramSocket(8889)` lắng nghe tín hiệu `DISCOVER_SERVER_REQUEST`. Khi nhận được, gửi ngược lại gói tin chứa thông tin IP và Port TCP của Server.
+- Phía Client: Khi mở app, gửi gói tin UDP Broadcast tới `255.255.255.255:8889`. Nhận phản hồi và tự động điền IP vào ô kết nối mà người dùng không cần gõ tay.
+
+### 2.3. Kênh Loa phát thanh Multicast (Bài 8)
+- Sử dụng địa chỉ IP Multicast lớp D: `224.0.0.100`, Port `9999`.
+- Khi Thủ thư gửi thông báo chung (thư viện sắp đóng cửa, có sách mới), Server gửi 1 gói tin qua `MulticastSocket`.
+- Tất cả Client đang mở đều `joinGroup()` kênh này và hiển thị popup thông báo tức thì.
+
+### 2.4. Phân quyền vị trí mạng theo IP (Bài 4)
+- Sử dụng `InetAddress` để kiểm tra IP kết nối của Client:
+  - Nếu kết nối từ trong mạng trường học (`isSiteLocalAddress() == true`): Cho phép tải toàn văn E-Book.
+  - Nếu kết nối từ xa ngoài Internet: Chỉ cho phép đọc bản xem trước (Preview) để bảo vệ bản quyền.
+
+### 2.5. Hỗ trợ kết nối từ xa qua Internet (TCP Tunnel)
+- Tương thích 100% với Ngrok / Playit.gg. Khi cần demo qua Internet, Server chạy `ngrok tcp 8888`, Client nhập host/port tunnel là mượn/tải sách từ xa bình thường.
 
 ---
 
 ## 3. CÁC THỰC THỂ DỮ LIỆU CỐT LÕI (CORE ENTITIES)
-Tất cả các thực thể đều cài đặt giao diện `java.io.Serializable` kèm `serialVersionUID`:
+Tất cả các thực thể đều cài đặt giao diện `java.io.Serializable`:
 
 1. **`User` (Tài khoản người dùng):**
-   - `username` (Mã sinh viên hoặc mã thủ thư), `password`, `fullName`, `role` (`LIBRARIAN` hoặc `STUDENT`), `maxBorrowQuota` (mặc định 3 cuốn).
-2. **`Book` (Tựa sách / Danh mục):**
-   - `id`, `isbn`, `title`, `author`, `category`, `publishYear`.
-   - `totalCopies` (tổng số bản sao vật lý), `availableCopies` (số bản sao đang sẵn sàng cho mượn).
+   - `username`, `password`, `fullName`, `email`, `role` (`LIBRARIAN` hoặc `STUDENT`), `maxQuota` (3 cuốn), `violationCount` (số lần vi phạm quá hạn), `isBlocked` (khóa mượn khi vi phạm quá 3 lần).
+2. **`Book` (Tựa sách):**
+   - `id`, `isbn`, `title`, `author`, `category`, `publishYear`, `totalCopies`, `availableCopies`, `ebookFileName` (đường dẫn file E-Book PDF/Text), `searchCount` (số lượt tìm kiếm để phục vụ thuật toán đề xuất).
 3. **`BookCopy` (Bản sao sách vật lý):**
-   - `copyId` (ví dụ: `BK01-C01`, `BK01-C02`), `bookId`, `status` (`AVAILABLE`, `BORROWED`, `RESERVED`, `MAINTENANCE`).
+   - `copyId` (ví dụ: `BK01-C01`), `bookId`, `status` (`AVAILABLE`, `BORROWED`, `RESERVED`, `MAINTENANCE`), `qrCodeData`.
 4. **`BorrowRecord` (Phiếu mượn / trả):**
-   - `id`, `copyId`, `bookId`, `bookTitle`, `studentId`, `borrowDate`, `dueDate`, `returnDate`.
-   - `status` (`BORROWING`, `RETURNED`, `OVERDUE`).
-   - `renewCount` (số lần đã gia hạn, tối đa 2 lần).
+   - `id`, `copyId`, `bookId`, `bookTitle`, `studentId`, `borrowDate`, `dueDate`, `returnDate`, `status` (`BORROWING`, `RETURNED`, `OVERDUE`), `renewCount` (tối đa 2 lần).
 5. **`ReservationRecord` (Phiếu đặt trước sách):**
-   - `id`, `bookId`, `bookTitle`, `studentId`, `reservationDate`.
-   - `status` (`PENDING`, `FULFILLED`, `CANCELLED`).
-   - `assignedCopyId` (bản sao được giữ chỗ khi có người trả sách).
+   - `id`, `bookId`, `bookTitle`, `studentId`, `reservationDate`, `status` (`PENDING`, `FULFILLED`, `CANCELLED`), `assignedCopyId`, `expiryDate` (thời hạn 24-48h đến lấy sách).
+6. **`AuditLog` (Nhật ký truy vết hệ thống):**
+   - `id`, `timestamp`, `action` (`LOGIN`, `BORROW`, `RETURN`, `RENEW`, `RESERVE`, `OVERDUE_STRIKE`, `DOWNLOAD_EBOOK`), `actor`, `details`.
 
 ---
 
-## 4. CHI TIẾT CÁC NGHIỆP VỤ HỆ THỐNG (BUSINESS LOGIC)
+## 4. CHI TIẾT 18 NGHIỆP VỤ HỆ THỐNG
 
-### 4.1. Nghiệp vụ Quản lý Sách & Bản sao (Books & Copies)
-- **Thủ thư:**
-  - Thêm tựa sách mới kèm số lượng bản sao ban đầu (hệ thống tự động sinh các `BookCopy` tương ứng: `BK{id}-C01`, `BK{id}-C02`...).
-  - Thêm bản sao lẻ cho một tựa sách đã có.
-  - Sửa thông tin tựa sách (tên, tác giả, thể loại, năm XB).
-  - Xóa bản sao (chỉ cho phép xóa bản sao ở trạng thái `AVAILABLE`).
-  - Xóa tựa sách (chỉ cho phép xóa khi toàn bộ các bản sao đều đang `AVAILABLE`, không có ai đang mượn hay đặt trước).
-- **Sinh viên & Thủ thư:**
-  - Xem danh sách sách kèm số lượng khả dụng (`availableCopies / totalCopies`).
-  - Tìm kiếm sách theo từ khóa (tên sách, tác giả, thể loại) kết hợp bộ lọc (Tất cả / Chỉ sách còn khả dụng).
-  - Xem chi tiết danh sách từng bản sao và trạng thái của từng bản sao.
+### Nhóm I: Nghiệp vụ Thư viện & Trải nghiệm Người dùng
+1. **Quản lý Bản sao sách vật lý (`BookCopy`):** Quản lý chi tiết từng cuốn vật lý cụ thể, trạng thái và mã QR.
+2. **Gia hạn sách (Renew):** Cho phép sinh viên gia hạn thêm 7 ngày (tối đa 2 lần) nếu chưa quá hạn và không có người chờ đặt trước.
+3. **Đặt trước sách (Reserve / Hold):** Khi sách hết kho (`availableCopies == 0`), xếp hàng FIFO. Khi có người trả sách, hệ thống tự động giữ chỗ ưu tiên.
+4. **Xử lý tranh chấp đồng thời (FIFO Concurrency):** Hai người mượn cuốn cuối cùng, người trước được duyệt; người sau nhận thông báo hết sách kèm gợi ý "Đặt trước".
+5. **Cập nhật số lượng Realtime:** Broadcast qua Socket, giao diện mọi máy tự động cập nhật ngay lập tức mà không cần F5.
+6. **Tự động quét lúc 00:00 hàng ngày (Midnight Scheduled Job):** Server tự động quét nửa đêm tính toán các phiếu mượn quá hạn trong ngày.
+7. **Nhật ký hệ thống (Audit Log) & Khóa mượn vi phạm 3 lần (3-Strike Rule):** Trả trễ hạn quá 3 lần -> Tự động khóa mượn sách. Thủ thư có quyền mở khóa.
+8. **Tìm kiếm mờ thông minh (Fuzzy Search):** Thuật toán so khớp chuỗi chấp nhận gõ sai chính tả nhẹ hoặc gõ tiếng Việt không dấu.
+9. **Quét mã QR Code (Quick Scan):** Quét mã QR của bản sao để tra cứu nhanh hoặc trả sách nhanh (hỗ trợ máy quét barcode hoặc file ảnh).
+10. **Đề xuất sách theo lịch sử tìm kiếm (Smart Recommendation):** Gợi ý sách cùng thể loại/chủ đề dựa trên các từ khóa sinh viên hay tìm kiếm.
 
-### 4.2. Nghiệp vụ Mượn sách (Borrow)
-- **Luồng xử lý:**
-  1. Kiểm tra tài khoản sinh viên:
-     - Chưa đạt giới hạn mượn tối đa (`currentBorrowingCount < maxBorrowQuota`).
-     - Không có cuốn sách nào đang trong tình trạng **Quá hạn (OVERDUE)** (nếu có sách quá hạn -> bắt buộc phải trả trước khi được mượn tiếp).
-  2. Kiểm tra sách:
-     - Nếu sinh viên đã có phiếu đặt trước đang ở trạng thái giữ chỗ (`RESERVED`) cho cuốn sách này -> Lấy đúng bản sao `assignedCopyId`.
-     - Nếu không, kiểm tra `availableCopies > 0`, chọn 1 bản sao có trạng thái `AVAILABLE`.
-  3. Cập nhật trạng thái bản sao thành `BORROWED`.
-  4. Tạo `BorrowRecord`:
-     - Ngày mượn: ngày hiện tại.
-     - Ngày hẹn trả: ngày hiện tại + số ngày mượn (sinh viên chọn từ 1 đến 30 ngày, mặc định 14 ngày).
-     - `renewCount = 0`, `status = BORROWING`.
-  5. Cập nhật `availableCopies` của `Book`, ghi lưu dữ liệu, kích hoạt `broadcastDataChanged()`.
-
-### 4.3. Nghiệp vụ Trả sách (Return)
-- **Luồng xử lý:**
-  1. Xác định `BorrowRecord` cần trả và bản sao `BookCopy` tương ứng.
-  2. Cập nhật `BorrowRecord`: `returnDate = currentDate`, `status = RETURNED`.
-  3. Kiểm tra hàng đợi Đặt trước (**Reservation Queue** - FIFO) của tựa sách này:
-     - **Nếu có sinh viên đang chờ đặt trước (`status == PENDING`):**
-       - Lấy phiếu đặt trước lâu nhất của sách này.
-       - Chuyển trạng thái bản sao `BookCopy` thành `RESERVED`.
-       - Gắn `assignedCopyId` vào phiếu đặt trước, chuyển trạng thái phiếu thành `FULFILLED` (sẵn sàng cho người đặt mượn).
-       - Phát thông báo Realtime riêng tới sinh viên được giữ chỗ.
-     - **Nếu không có ai đặt trước:**
-       - Chuyển trạng thái bản sao `BookCopy` về `AVAILABLE`.
-       - Tăng `availableCopies` của `Book` lên 1.
-  4. Ghi lưu dữ liệu, kích hoạt `broadcastDataChanged()`.
-
-### 4.4. Nghiệp vụ Gia hạn sách (Renew)
-- **Luồng xử lý:**
-  1. Sinh viên chọn cuốn sách đang mượn và gửi yêu cầu Gia hạn.
-  2. Kiểm tra các điều kiện an toàn:
-     - Sách **chưa bị quá hạn** (`status != OVERDUE` và `dueDate >= currentDate`).
-     - Số lần gia hạn chưa vượt quá mức cho phép (`renewCount < 2`).
-     - Tựa sách này **không có ai đang đặt trước** trong hàng chờ (`PENDING`), ưu tiên người đang xếp hàng.
-  3. Nếu đủ điều kiện:
-     - Tăng hạn trả thêm 7 ngày: `dueDate = dueDate.plusDays(7)`.
-     - Tăng số lần gia hạn: `renewCount++`.
-  4. Ghi lưu dữ liệu và thông báo gia hạn thành công.
-
-### 4.5. Nghiệp vụ Đặt trước sách (Reserve / Hold)
-- **Luồng xử lý:**
-  1. Khi một tựa sách **hết bản sao khả dụng** (`availableCopies == 0`), sinh viên có thể chọn chức năng **"Đặt trước"**.
-  2. Kiểm tra điều kiện:
-     - Sinh viên không đang mượn cuốn sách này.
-     - Sinh viên chưa có phiếu đặt trước nào đang chờ (`PENDING`) cho cuốn sách này.
-  3. Tạo `ReservationRecord` với `status = PENDING`, thời gian đặt = hiện tại.
-  4. Hỗ trợ sinh viên thao tác **"Hủy đặt trước" (Cancel Reservation)** nếu không còn nhu cầu.
-
-### 4.6. Nghiệp vụ Tính toán Quá hạn (Overdue Calculation)
-- Mỗi khi truy vấn danh sách phiếu mượn hoặc khi Client kết nối:
-  - Hệ thống tự động so sánh `dueDate` với `currentDate`.
-  - Nếu `currentDate > dueDate` và `status == BORROWING` -> Tự động chuyển thành `OVERDUE`.
-- Trên giao diện Client:
-  - Phiếu mượn quá hạn hiển thị màu đỏ cảnh báo nổi bật kèm số ngày trễ hạn.
-  - Sinh viên bị khóa chức năng mượn sách mới cho đến khi hoàn trả sách quá hạn.
+### Nhóm II: Nghiệp vụ Mạng Nâng cao Chuẩn Môn học
+11. **Thời hạn giữ chỗ & Cảnh báo trước 6 tiếng:** Thông báo hạn chót nhận sách đặt trước, nhắc nhở trước 6 tiếng trước khi hủy giữ chỗ.
+12. **Tối ưu Server:** Thread Pool (`ExecutorService`) + Khóa hạt mịn (`ReentrantLock` theo từng sách).
+13. **Tải sách mềm / E-Book qua Socket Stream:** Truyền tải file PDF bài giảng/sách điện tử qua Socket để đọc tại nhà.
+14. **Hỗ trợ kết nối từ xa qua Internet:** Tương thích TCP Tunnel (Ngrok) mượn/tải sách từ xa.
+15. **Tự động dò tìm Server bằng UDP Broadcast (Bài 4 & 7):** Client tự tìm thấy Server trong mạng LAN không cần gõ IP.
+16. **Kênh "Loa phát thanh" Multicast (Bài 8):** Phát thông báo toàn trường tới mọi máy Client qua `224.0.0.100`.
+17. **Phân quyền tài liệu theo vị trí mạng (`InetAddress` - Bài 4):** Trong trường tải bản full; ngoài trường xem bản preview.
+18. **Giám sát lưu lượng & Trạng thái Socket (Bài 5):** Thống kê tốc độ truyền file (MB/s), ping latency, IP/port client online.
 
 ---
 
-## 5. XỬ LÝ ĐỒNG BỘ HÓA (SYNCHRONIZATION) & AN TOÀN ĐA LUỒNG
-- **Nguy cơ tranh chấp (Race Condition):**
-  - Nhiều sinh viên cùng bấm mượn cuốn sách/bản sao cuối cùng tại cùng 1 tích tắc.
-  - Vừa có người trả sách, vừa có người bấm mượn và người bấm đặt trước đồng thời.
-- **Giải pháp:**
-  - Toàn bộ các phương thức thay đổi trạng thái trong `LibraryService` đều được đồng bộ hóa với từ khóa `synchronized`:
-    - `public synchronized Response borrowBook(...)`
-    - `public synchronized Response returnBook(...)`
-    - `public synchronized Response renewBook(...)`
-    - `public synchronized Response reserveBook(...)`
-    - `public synchronized Response cancelReservation(...)`
-    - `public synchronized Response addBook/updateBook/deleteBook(...)`
-  - Đảm bảo tính nguyên tử (Atomicity): Không bao giờ xảy ra tình trạng âm kho, tranh chấp bản sao hoặc sai lệch hàng đợi đặt trước.
-
----
-
-## 6. GIAO THỨC TRUYỀN THÔNG & REALTIME BROADCAST
-### 6.1. Gói tin Mạng (Data Packets)
-- **`CommandType`:**
-  - `LOGIN`, `LOGOUT`, `PING`
-  - `GET_BOOKS`, `GET_BOOK_COPIES`, `ADD_BOOK`, `UPDATE_BOOK`, `DELETE_BOOK`, `ADD_COPY`, `DELETE_COPY`
-  - `BORROW_BOOK`, `RETURN_BOOK`, `RENEW_BOOK`, `RESERVE_BOOK`, `CANCEL_RESERVATION`
-  - `GET_MY_BORROWS`, `GET_MY_RESERVATIONS`, `GET_ALL_BORROWS`, `GET_ALL_RESERVATIONS`
-- **`Request`:** Chứa `command`, `payload`, `token/username`.
-- **`Response`:** Chứa `status` (`SUCCESS`, `FAILED`, `ERROR`), `message`, `data`.
-- **`RealtimeEvent`:** Chứa `eventType` (`DATA_CHANGED`, `RESERVATION_AVAILABLE`), `data`.
-
-### 6.2. Tiêu chuẩn Kỹ thuật Luồng Object
-1. **Tránh Deadlock khởi tạo:** Luôn tạo `ObjectOutputStream` và `flush()` **TRƯỚC** khi tạo `ObjectInputStream`.
-2. **Xóa Cache luồng (`oos.reset()`):** Luôn gọi `oos.reset()` khi gửi dữ liệu cập nhật qua Persistent Connection để tránh Java tái sử dụng tham chiếu cũ trong bộ đệm.
-3. **Phát sóng Realtime (Broadcast):** Khi có bất kỳ thay đổi nào về sách, bản sao, phiếu mượn, Server lập tức gửi `RealtimeEvent` tới toàn bộ `activeClients`. Client dùng `SwingUtilities.invokeLater()` để cập nhật trực tiếp bảng `JTable`.
-
----
-
-## 7. LƯU TRỮ DỮ LIỆU (PERSISTENCE LAYER)
-- Sử dụng các tệp tin nhị phân đối tượng `.dat` thuần Java đặt trong thư mục `data/`:
-  - `data/users.dat`: Danh sách `User`.
-  - `data/books.dat`: Danh sách `Book`.
-  - `data/copies.dat`: Danh sách `BookCopy`.
-  - `data/borrows.dat`: Danh sách `BorrowRecord`.
-  - `data/reservations.dat`: Danh sách `ReservationRecord`.
-- **Tự động khởi tạo dữ liệu mẫu (Seed Data):**
-  - Nếu tệp chưa tồn tại, hệ thống tự động sinh dữ liệu mẫu:
-    - 1 Thủ thư (`admin`/`admin123`).
-    - 2 Sinh viên (`sv001`/`123`, `sv002`/`123`).
-    - 5 tựa sách nổi bật môn Mạng & CNTT, mỗi tựa sách kèm 2-3 bản sao vật lý.
-
----
-
-## 8. GIAO DIỆN NGƯỜI DÙNG JAVA SWING
-- **Màn hình Đăng nhập:**
-  - Form đăng nhập tài khoản/mật khẩu, nút Đăng nhập.
-  - Nút **⚙ Cài đặt kết nối** mở hộp thoại cấu hình Host/Port (placeholder `127.0.0.1:8888`), kèm nút **Kiểm tra kết nối**.
-- **Dashboard Sinh viên:**
-  - Tab 1: **Tra cứu & Mượn sách:** Bảng sách kèm số lượng khả dụng, thanh tìm kiếm từ khóa, bộ lọc; nút **Mượn sách** (chọn hạn trả 1-30 ngày), nút **Đặt trước sách** (khi sách hết).
-  - Tab 2: **Sách đang mượn:** Danh sách sách đang giữ, ngày mượn, hạn trả, trạng thái quá hạn (chữ đỏ), nút **Trả sách**, nút **Gia hạn sách (+7 ngày)**.
-  - Tab 3: **Sách đã đặt trước:** Danh sách sách đang chờ đặt trước, nút **Hủy đặt trước**.
-- **Dashboard Thủ thư:**
-  - Tab 1: **Quản lý tựa sách & Bản sao:** Bảng tựa sách, nút Thêm sách, Sửa sách, Xóa sách; bảng chi tiết danh sách bản sao của sách được chọn, nút Thêm bản sao, Xóa bản sao.
-  - Tab 2: **Quản lý Mượn / Trả:** Xem toàn bộ phiếu mượn của trường, lọc phiếu quá hạn, tìm kiếm theo mã sinh viên.
-  - Tab 3: **Quản lý Đặt trước:** Xem toàn bộ danh sách đặt trước của các sinh viên.
-
----
-
-## 9. CẤU TRÚC BUILD & SCRIPTS
-- Cấu hình chuẩn Maven `pom.xml` (Java 21/17, UTF-8, JUnit 5).
-- Scripts Windows:
-  - `build.bat`: Chuyển mã `chcp 65001`, biên dịch toàn bộ bằng `javac -encoding UTF-8`.
-  - `run-server.bat`: Chạy Server với cờ `-Dfile.encoding=UTF-8`.
-  - `run-client.bat`: Mở Client Swing với cờ `-Dfile.encoding=UTF-8`.
+## 5. LƯU TRỮ DỮ LIỆU & BẢNG MÃ
+- **Lưu trữ nhị phân thuần Java:** Đọc/ghi các tệp `data/*.dat` bằng `ObjectInputStream` / `ObjectOutputStream`. Tự động tạo thư mục `data/` và nạp sẵn tài khoản mẫu, sách mẫu và các file E-Book mẫu khi khởi động lần đầu.
+- **Bảng mã tiếng Việt:** Toàn bộ source code UTF-8, các script `.bat` đều cấu hình `chcp 65001`, `-encoding UTF-8` và `-Dfile.encoding=UTF-8`.
