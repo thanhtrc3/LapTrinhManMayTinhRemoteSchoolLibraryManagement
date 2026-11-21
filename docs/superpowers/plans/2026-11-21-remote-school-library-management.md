@@ -2,16 +2,16 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Xây dựng hoàn chỉnh Hệ thống Quản lý Mượn/Trả Sách Thư viện Trường học (Remote School Library Management) hoạt động qua mạng máy tính theo mô hình Khách/Chủ (Client/Server) đa luồng, hỗ trợ Realtime Broadcast, giao diện Swing và lưu trữ nhị phân thuần Java.
+**Goal:** Xây dựng hoàn chỉnh Hệ thống Quản lý Mượn/Trả Sách Thư viện Trường học (Remote School Library Management) hoạt động qua mạng máy tính theo mô hình Khách/Chủ (Client/Server) đa luồng, hỗ trợ quản lý tài khoản, tựa sách và từng bản sao (BookCopy), tìm kiếm, mượn, trả, gia hạn (renew), đặt trước (reserve), tính quá hạn (overdue), xử lý an toàn đồng thời (synchronized) và đồng bộ Realtime Broadcast.
 
 **Architecture:** 
-- Phía Server: `ServerSocket` đa luồng (`ClientHandler`), đồng bộ hóa (`synchronized`) kho sách, phát quảng bá sự kiện Realtime (`broadcast`) đến các Client đang online khi có thay đổi dữ liệu, ghi log chi tiết Console.
-- Phía Client: Giao diện đồ họa Java Swing với luồng ngầm (`Background Listener Thread`) nhận tín hiệu Socket để cập nhật UI tự động (`SwingUtilities.invokeLater`), cấu hình IP & Port linh hoạt (hỗ trợ file `config.properties` và placeholder `127.0.0.1:8888`).
+- Phía Server: `ServerSocket` đa luồng (`ClientHandler`), đồng bộ hóa (`synchronized`) kho sách và bản sao, xử lý hàng đợi đặt trước (FIFO reservation queue), phát quảng bá sự kiện Realtime (`broadcast`) đến các Client đang online khi có thay đổi dữ liệu, ghi log chi tiết Console.
+- Phía Client: Giao diện đồ họa Java Swing với luồng ngầm (`Background Listener Thread`) nhận tín hiệu Socket để cập nhật UI tự động (`SwingUtilities.invokeLater`), cấu hình IP & Port linh hoạt (hỗ trợ file `config.properties`, placeholder `127.0.0.1:8888`, ping test).
 - Giao thức & Lưu trữ: Java Object Serialization (`Serializable`, `oos.reset()`, tạo `ObjectOutputStream` trước `ObjectInputStream`) và lưu trữ tệp nhị phân `.dat`.
 
 **Tech Stack:** Pure Java (JDK 17+/21+), Java Swing, Java Socket API (`java.net`), Java I/O (`java.io`), Maven structure & Windows Batch scripts.
 
-**Spec:** [SPECIFICATION.md](file:///d:/Code/Chưa%20biết%20đặt%20tên%20gì%20AI%20nhớ%20sửa%20tên/SPECIFICATION.md)
+**Spec:** [SPECIFICATION.md](file:///d:/Code/LapTrinhManMayTinhRemoteSchoolLibraryManagement/SPECIFICATION.md)
 
 ---
 
@@ -20,17 +20,19 @@
 - Toàn bộ source code và file text lưu định dạng `UTF-8`.
 - Luôn gọi `oos.reset()` khi gửi lại dữ liệu qua kết nối duy trì `Persistent Connection`.
 - Luôn khởi tạo `new ObjectOutputStream` + `flush()` trước khi gọi `new ObjectInputStream`.
-- Tất cả phương thức thay đổi kho sách trên Server phải dùng `synchronized` để bảo đảm Thread-Safety.
+- Tất cả phương thức thay đổi kho sách, bản sao, phiếu mượn, đặt trước trên Server phải dùng `synchronized` để bảo đảm Thread-Safety.
 - Scripts `.bat` trên Windows phải có `chcp 65001`, `-encoding UTF-8` và `-Dfile.encoding=UTF-8`.
 
 ---
 
 ## Review Focus
-1. **Overselling Race Condition:** Hai sinh viên cùng mượn 1 cuốn sách cuối cùng cùng lúc -> Chỉ 1 người thành công, người kia nhận thông báo hết sách, số lượng không bị âm.
-2. **Stale Data on Persistent Stream:** Dữ liệu thay đổi trên Server nhưng Client nhận lại bản cũ do cache của `ObjectOutputStream` -> Ngăn ngừa triệt để bằng `oos.reset()`.
-3. **Stream Initialization Deadlock:** Khởi tạo sai thứ tự Input/Output stream làm treo ứng dụng -> Phải tạo OutputStream trước.
-4. **Empty IP/Port fallback:** Người dùng xóa sạch ô IP/Port trong Cài đặt -> Tự động quay về mặc định `127.0.0.1:8888`, không gây `NullPointerException` hoặc `NumberFormatException`.
-5. **Realtime UI Refresh Safety:** Server đẩy dữ liệu về luồng ngầm nhưng cập nhật UI trên Swing không đúng luồng -> Phải bọc qua `SwingUtilities.invokeLater()`.
+1. **Overselling & Copy Race Condition:** Nhiều sinh viên cùng mượn 1 bản sao khả dụng duy nhất tại cùng một thời điểm -> Đúng 1 người mượn được, bản sao chuyển `BORROWED`, không bị âm.
+2. **Reservation FIFO Integrity:** Khi sách được trả, nếu có sinh viên đang đặt trước (`PENDING`), bản sao tự động được giữ chỗ (`RESERVED`) cho người đặt trước đầu tiên trong hàng đợi.
+3. **Renewal Constraints:** Sinh viên chỉ được gia hạn khi chưa quá hạn, chưa vượt quá 2 lần, và không có sinh viên khác đang chờ đặt trước cuốn sách đó.
+4. **Stale Data on Persistent Stream:** Dữ liệu thay đổi trên Server nhưng Client nhận lại bản cũ do cache của `ObjectOutputStream` -> Ngăn ngừa triệt để bằng `oos.reset()`.
+5. **Stream Initialization Deadlock:** Khởi tạo sai thứ tự Input/Output stream làm treo ứng dụng -> Phải tạo OutputStream trước.
+6. **Empty IP/Port fallback:** Người dùng xóa sạch ô IP/Port trong Cài đặt -> Tự động quay về mặc định `127.0.0.1:8888`, không gây ngoại lệ.
+7. **Realtime UI Refresh Safety:** Cập nhật UI trên Swing từ luồng ngầm phải bọc qua `SwingUtilities.invokeLater()`.
 
 ---
 
@@ -41,8 +43,12 @@
 - Create: `src/main/java/com/library/common/model/Role.java`
 - Create: `src/main/java/com/library/common/model/User.java`
 - Create: `src/main/java/com/library/common/model/Book.java`
+- Create: `src/main/java/com/library/common/model/CopyStatus.java`
+- Create: `src/main/java/com/library/common/model/BookCopy.java`
 - Create: `src/main/java/com/library/common/model/BorrowStatus.java`
 - Create: `src/main/java/com/library/common/model/BorrowRecord.java`
+- Create: `src/main/java/com/library/common/model/ReservationStatus.java`
+- Create: `src/main/java/com/library/common/model/ReservationRecord.java`
 - Create: `src/main/java/com/library/common/network/CommandType.java`
 - Create: `src/main/java/com/library/common/network/ResponseStatus.java`
 - Create: `src/main/java/com/library/common/network/Request.java`
@@ -52,9 +58,9 @@
 
 **Steps:**
 - [ ] Tạo `pom.xml` cấu hình chuẩn Maven với Java 17+, plugin compiler encoding UTF-8, JUnit 5 cho test.
-- [ ] Định nghĩa các enum: `Role` (`LIBRARIAN`, `STUDENT`), `BorrowStatus` (`BORROWING`, `RETURNED`, `OVERDUE`).
-- [ ] Cài đặt các class thực thể: `User`, `Book`, `BorrowRecord` thực thi `Serializable` kèm `serialVersionUID`.
-- [ ] Cài đặt các class gói tin mạng: `CommandType`, `ResponseStatus`, `Request`, `Response`, `RealtimeEvent` thực thi `Serializable`.
+- [ ] Định nghĩa các enum: `Role` (`LIBRARIAN`, `STUDENT`), `CopyStatus` (`AVAILABLE`, `BORROWED`, `RESERVED`, `MAINTENANCE`), `BorrowStatus` (`BORROWING`, `RETURNED`, `OVERDUE`), `ReservationStatus` (`PENDING`, `FULFILLED`, `CANCELLED`).
+- [ ] Cài đặt các class thực thể: `User`, `Book`, `BookCopy`, `BorrowRecord`, `ReservationRecord` thực thi `Serializable` kèm `serialVersionUID`.
+- [ ] Cài đặt các class gói tin mạng: `CommandType` (bao gồm `BORROW_BOOK`, `RETURN_BOOK`, `RENEW_BOOK`, `RESERVE_BOOK`, `CANCEL_RESERVATION`,...), `ResponseStatus`, `Request`, `Response`, `RealtimeEvent` thực thi `Serializable`.
 - [ ] Viết test `SerializationTest.java`: Tuần tự hóa một đối tượng `Request` & `Response` sang mảng byte và phục hồi lại để đảm bảo tính toàn vẹn dữ liệu.
 - [ ] Chạy kiểm thử xác nhận Task 1 hoàn tất.
 
@@ -69,19 +75,23 @@
 
 **Steps:**
 - [ ] Cài đặt `DataStorage`:
-  - Đọc/ghi các tệp `data/users.dat`, `data/books.dat`, `data/borrows.dat` bằng `ObjectInputStream` / `ObjectOutputStream`.
-  - Tự động nạp sẵn dữ liệu mẫu (Seed Data) nếu tệp chưa tồn tại: 1 tài khoản Thủ thư (`admin`/`admin123`), 2 tài khoản Sinh viên (`sv001`/`123`, `sv002`/`123`), và 10 đầu sách phong phú.
+  - Đọc/ghi các tệp `data/users.dat`, `data/books.dat`, `data/copies.dat`, `data/borrows.dat`, `data/reservations.dat` bằng `ObjectInputStream` / `ObjectOutputStream`.
+  - Tự động nạp sẵn dữ liệu mẫu (Seed Data) nếu tệp chưa tồn tại: 1 Thủ thư (`admin`/`admin123`), 2 Sinh viên (`sv001`/`123`, `sv002`/`123`), 5 tựa sách kèm các bản sao vật lý.
 - [ ] Cài đặt `LibraryService`:
-  - `authenticate(username, password)`
-  - `getAllBooks()`, `searchBooks(keyword, onlyAvailable)`
-  - `synchronized borrowBook(studentId, bookId, daysToBorrow)`: Kiểm tra hạn mức mượn sinh viên (ví dụ tối đa 3 cuốn đang mượn), kiểm tra `availableQuantity > 0`, trừ số lượng, tạo `BorrowRecord` kèm ngày hẹn trả.
-  - `synchronized returnBook(borrowRecordId)`: Đổi trạng thái `RETURNED`, tăng lại `availableQuantity` của sách.
-  - `synchronized addBook(...)`, `updateBook(...)`, `deleteBook(...)`.
-  - `getUserBorrows(studentId)`, `getAllBorrows()`.
+  - `authenticate(username, password)`.
+  - `getAllBooks()`, `searchBooks(keyword, onlyAvailable)`, `getBookCopies(bookId)`.
+  - `synchronized borrowBook(studentId, bookId, daysToBorrow)`: Kiểm tra hạn mức, kiểm tra sách quá hạn, lấy bản sao `AVAILABLE` (hoặc bản sao đã `RESERVED` cho sinh viên đó), chuyển bản sao thành `BORROWED`, tạo `BorrowRecord`.
+  - `synchronized returnBook(borrowRecordId)`: Đổi trạng thái `RETURNED`. Nếu có phiếu đặt trước (`PENDING`), chuyển bản sao thành `RESERVED` giữ chỗ cho người đặt đầu tiên; nếu không chuyển về `AVAILABLE`.
+  - `synchronized renewBook(borrowRecordId)`: Kiểm tra chưa quá hạn, `renewCount < 2`, không có ai đặt trước cuốn sách đó -> gia hạn +7 ngày.
+  - `synchronized reserveBook(studentId, bookId)`: Khi `availableCopies == 0`, tạo `ReservationRecord` vào hàng chờ `PENDING`.
+  - `synchronized cancelReservation(reservationId, studentId)`.
+  - `synchronized addBook(...)`, `updateBook(...)`, `deleteBook(...)`, `addCopy(...)`, `deleteCopy(...)`.
+  - `getUserBorrows(studentId)`, `getUserReservations(studentId)`, `getAllBorrows()`, `getAllReservations()`.
+  - `checkOverdue()`: Cập nhật tự động trạng thái `OVERDUE` cho các phiếu mượn quá hạn.
 - [ ] Viết test tương tranh đa luồng `LibraryServiceConcurrencyTest.java`:
-  - Tạo 1 cuốn sách có số lượng `availableQuantity = 1`.
-  - Bắn 5 threads cùng gọi `borrowBook()` cùng 1 thời điểm.
-  - Kiểm tra assert: Đúng 1 thread thành công, 4 thread bị từ chối, `availableQuantity == 0`, không bị âm.
+  - Kiểm tra 5 threads cùng tranh mượn 1 bản sao duy nhất -> Chỉ 1 thread thành công.
+  - Kiểm tra đặt trước và tự động chuyển giao bản sao khi trả sách.
+  - Kiểm tra giới hạn gia hạn tối đa 2 lần và chặn gia hạn khi quá hạn.
 - [ ] Chạy kiểm thử xác nhận Task 2 vượt qua an toàn.
 
 ---
@@ -98,16 +108,16 @@
 - [ ] Cài đặt `ClientHandler`:
   - Nhận `Socket` và tham chiếu tới `LibraryServer`.
   - Khởi tạo `ObjectOutputStream` và `flush()` TRƯỚC, sau đó khởi tạo `ObjectInputStream`.
-  - Vòng lặp `while(running)` đọc `Request` từ client, gọi `LibraryService` xử lý và gửi `Response` về.
+  - Vòng lặp `while(running)` đọc `Request` từ client, phân phối tới `LibraryService` (xử lý đăng nhập, sách, bản sao, mượn, trả, gia hạn, đặt trước) và gửi `Response` về.
   - Phương thức `sendEvent(RealtimeEvent event)`: Gọi `oos.reset()` rồi `oos.writeObject(event)` và `oos.flush()`.
-  - Bắt ngoại lệ ngắt kết nối (Disconnect/EOF), đóng socket an toàn, báo Server gỡ khỏi `activeClients`.
+  - Bắt ngoại lệ ngắt kết nối an toàn, gỡ khỏi `activeClients`, cập nhật log.
 - [ ] Cài đặt `LibraryServer`:
   - `ServerSocket` mở tại port (mặc định 8888).
   - Quản lý `CopyOnWriteArrayList<ClientHandler> activeClients`.
   - Phương thức `broadcastEvent(RealtimeEvent event)`: Lặp qua toàn bộ `activeClients` và gửi sự kiện Realtime.
-  - In log chi tiết với timestamp: `[TIMESTAMP] [CONNECT]`, `[LOGIN]`, `[BORROW]`, `[DISCONNECT]`, hiển thị số lượng client online.
-- [ ] Cài đặt `ServerMain`: Điểm vào (Entry point) khởi động Server từ dòng lệnh.
-- [ ] Viết `ServerNetworkIntegrationTest.java`: Khởi động Server trên một port test ngẫu nhiên, mở 2 socket client kết nối, đăng nhập, test nhận gói tin phản hồi và nhận broadcast realtime.
+  - In log chi tiết với timestamp: `[TIMESTAMP] [CONNECT]`, `[LOGIN]`, `[BORROW]`, `[RETURN]`, `[RENEW]`, `[RESERVE]`, `[DISCONNECT]`, hiển thị số lượng client online.
+- [ ] Cài đặt `ServerMain`: Khởi động Server từ dòng lệnh.
+- [ ] Viết `ServerNetworkIntegrationTest.java`: Khởi động Server trên port ngẫu nhiên, test client kết nối, mượn, trả, gia hạn, đặt trước và nhận broadcast realtime.
 - [ ] Chạy kiểm thử xác nhận Task 3 hoàn thành.
 
 ---
@@ -126,15 +136,15 @@
   - Giá trị mặc định `127.0.0.1` và `8888`.
   - Hàm `resolveHost(String input)` và `resolvePort(String input)`: Nếu input rỗng/khoảng trắng -> Trả về mặc định `127.0.0.1` và `8888`.
 - [ ] Cài đặt interface `RealtimeListener`:
-  - `void onBookDataChanged(List<Book> updatedBooks);`
-  - `void onNotificationReceived(String message);`
+  - `void onDataChanged();`
+  - `void onNotification(String message);`
 - [ ] Cài đặt `LibraryClient`:
   - Quản lý `Socket`, `ObjectOutputStream`, `ObjectInputStream`.
   - Khởi tạo luồng ngầm `Background Listener Thread` chạy liên tục lắng nghe `in.readObject()`.
-  - Phân tách bản tin: Nếu là `Response` tương ứng với Request vừa gửi thì chuyển giao cho hàm gọi; nếu là `RealtimeEvent` thì bắn callback sang các `RealtimeListener` đã đăng ký.
-  - Phương thức `sendRequest(Request req)` đồng bộ hoặc future để lấy `Response`.
-  - Phương thức `testConnection(host, port)` trả về kết quả nhanh kiểm tra Server có đang online hay không.
-- [ ] Viết test `ClientConfigTest.java`: Kiểm tra fallback giá trị mặc định khi chuỗi rỗng hoặc xóa sạch ô nhập.
+  - Phân tách bản tin: `Response` chuyển về hàm gọi đồng bộ; `RealtimeEvent` chuyển cho các `RealtimeListener`.
+  - Phương thức gửi các lệnh: `login`, `borrowBook`, `returnBook`, `renewBook`, `reserveBook`, `cancelReservation`, `getBooks`,...
+  - Phương thức `testConnection(host, port)` trả về kết quả kiểm tra Server online.
+- [ ] Viết test `ClientConfigTest.java`: Kiểm tra fallback giá trị mặc định khi chuỗi rỗng.
 - [ ] Chạy kiểm thử xác nhận Task 4 hoàn tất.
 
 ---
@@ -151,20 +161,20 @@
 
 **Steps:**
 - [ ] Cài đặt `SettingsDialog`:
-  - Ô nhập IP và Port có placeholder `127.0.0.1` và `8888`.
-  - Nút "Kiểm tra kết nối" (Ping test): Báo xanh nếu kết nối được, báo đỏ nếu server tắt.
+  - Ô nhập Host & Port có placeholder `127.0.0.1` và `8888`.
+  - Nút "Kiểm tra kết nối" (Ping test): Báo xanh nếu kết nối tốt, báo đỏ nếu lỗi.
   - Nút "Lưu": Lưu vào `config.properties`.
-- [ ] Cài đặt `LoginFrame`:
-  - Thiết kế sạch sẽ, hiện đại: Username, Password, Nút Đăng nhập, Nút "⚙ Cấu hình Server".
-  - Bắt lỗi thông báo trực quan (sai mật khẩu, server chưa bật...).
+- [ ] Cài đặt `LoginFrame`: Form đăng nhập, nút Đăng nhập, nút "⚙ Cấu hình Server".
 - [ ] Cài đặt `StudentDashboard`:
-  - Tab 1: "Danh mục sách": Bảng `JTable` hiển thị sách, thanh tìm kiếm từ khóa, lọc tình trạng (Còn sách / Tất cả), nút "Mượn sách" (hiện dialog cho phép chọn hạn trả 1-30 ngày).
-  - Tab 2: "Sách đang mượn": Bảng `JTable` danh sách sách của cá nhân, hiển thị ngày mượn, ngày hẹn trả, cảnh báo chữ đỏ nếu quá hạn, nút "Trả sách".
-  - Đăng ký `RealtimeListener`: Khi nhận sự kiện thay đổi sách, tự động gọi `SwingUtilities.invokeLater()` cập nhật lại `JTable` ngay lập tức.
+  - Tab 1: "Tra cứu & Mượn sách": Bảng sách (`JTable`), tìm kiếm, nút **Mượn sách** (dialog chọn hạn trả 1-30 ngày), nút **Đặt trước** (khi sách hết).
+  - Tab 2: "Sách đang mượn": Bảng danh sách sách mượn, cảnh báo đỏ nếu quá hạn, nút **Trả sách**, nút **Gia hạn (+7 ngày)**.
+  - Tab 3: "Sách đã đặt trước": Bảng danh sách sách đang chờ đặt trước, nút **Hủy đặt trước**.
+  - Đăng ký `RealtimeListener`: Khi có sự kiện Realtime, tự động gọi `SwingUtilities.invokeLater()` cập nhật lại dữ liệu.
 - [ ] Cài đặt `LibrarianDashboard`:
-  - Tab 1: "Quản lý kho sách": Bảng `JTable`, nút Thêm, Sửa, Xóa, Cập nhật số lượng qua `BookDialog`.
-  - Tab 2: "Quản lý mượn/trả": Bảng `JTable` hiển thị toàn bộ phiếu mượn của trường, lọc sách quá hạn, tìm kiếm theo mã sinh viên.
-  - Đăng ký `RealtimeListener`: Cập nhật tự động dữ liệu kho sách và phiếu mượn realtime.
+  - Tab 1: "Quản lý tựa sách & Bản sao": Bảng tựa sách, nút Thêm/Sửa/Xóa sách; bảng bản sao vật lý của sách, nút Thêm/Xóa bản sao.
+  - Tab 2: "Quản lý Mượn / Trả": Bảng toàn bộ phiếu mượn trường, lọc quá hạn, tìm theo mã SV.
+  - Tab 3: "Quản lý Đặt trước": Bảng giám sát danh sách sinh viên đặt trước sách.
+  - Đăng ký `RealtimeListener`: Cập nhật bảng tức thì khi có biến động.
 - [ ] Cài đặt `ClientMain`: Điểm vào khởi chạy giao diện Swing của Client.
 
 ---
@@ -179,18 +189,13 @@
 - Test: `src/test/java/com/library/EndToEndSimulationTest.java`
 
 **Steps:**
-- [ ] Tạo file `build.bat`:
-  - Lệnh `chcp 65001`.
-  - Quét toàn bộ file `.java` và biên dịch bằng `javac -encoding UTF-8 -d bin ...`.
-- [ ] Tạo file `run-server.bat`:
-  - Chạy `java -Dfile.encoding=UTF-8 -cp bin com.library.server.ServerMain`.
-- [ ] Tạo file `run-client.bat`:
-  - Chạy `java -Dfile.encoding=UTF-8 -cp bin com.library.client.ClientMain`.
+- [ ] Tạo file `build.bat`: `chcp 65001`, `javac -encoding UTF-8 -d bin ...`.
+- [ ] Tạo file `run-server.bat`: `chcp 65001`, `java -Dfile.encoding=UTF-8 -cp bin com.library.server.ServerMain`.
+- [ ] Tạo file `run-client.bat`: `chcp 65001`, `java -Dfile.encoding=UTF-8 -cp bin com.library.client.ClientMain`.
 - [ ] Viết kiểm thử `EndToEndSimulationTest.java`:
-  - Tự động dựng Server ngầm.
-  - Tạo 2 Client kết nối đồng thời.
-  - Client 1 (Sinh viên 1) mượn sách.
-  - Xác nhận Client 2 (Sinh viên 2) nhận được sự kiện Realtime cập nhật số lượng sách giảm đi mà không cần làm gì.
-  - Client 1 trả sách, xác nhận số lượng sách hồi phục realtime.
-- [ ] Viết `README.md` hướng dẫn chi tiết cách chạy bằng file `.bat` và cách chạy qua IDE cho giáo viên chấm bài.
-- [ ] Chạy kiểm thử toàn bộ dự án (`mvn test` hoặc qua script) và xác nhận 100% hoạt động mượt mà.
+  - Server khởi động ngầm.
+  - 2 Client kết nối đồng thời.
+  - Mô phỏng luồng hoàn chỉnh: Sinh viên 1 mượn bản sao cuối cùng -> Sách hết khả dụng -> Sinh viên 2 bấm Đặt trước -> Sinh viên 1 Trả sách -> Hệ thống tự động chuyển giao bản sao cho Sinh viên 2 giữ chỗ realtime.
+  - Kiểm tra Sinh viên 1 gia hạn sách thành công.
+- [ ] Viết `README.md` hướng dẫn chi tiết cách chạy demo cho giảng viên.
+- [ ] Commit & Push lên GitHub repository.
