@@ -2,53 +2,96 @@ package com.library.common.model;
 
 import java.io.Serializable;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 public class ReservationRecord implements Serializable {
     private static final long serialVersionUID = 1L;
 
-    private final int id;
-    private final int bookId;
-    private final String bookTitle;
-    private final String studentId;
-    private final LocalDate reservationDate;
-    private LocalDate expiryDate;
+    private long id;
+    private int bookId;
+    private String bookTitle;
+    private String studentId;
+    private LocalDateTime reservationDate;
+    private LocalDateTime expiryDate;
     private ReservationStatus status;
+    private String assignedCopyId;
 
-    public ReservationRecord(int id, int bookId, String bookTitle, String studentId, LocalDate reservationDate) {
+    public ReservationRecord() {
+    }
+
+    public ReservationRecord(long id, int bookId, String bookTitle, String studentId, LocalDateTime reservationDate, LocalDateTime expiryDate, ReservationStatus status, String assignedCopyId) {
         this.id = id;
         this.bookId = bookId;
         this.bookTitle = bookTitle;
         this.studentId = studentId;
         this.reservationDate = reservationDate;
-        this.status = ReservationStatus.PENDING;
+        this.expiryDate = expiryDate;
+        this.status = status;
+        this.assignedCopyId = assignedCopyId;
     }
 
-    public int getId() {
+    public ReservationRecord(long id, int bookId, String bookTitle, String studentId, LocalDateTime reservationDate) {
+        this(id, bookId, bookTitle, studentId, reservationDate, null, ReservationStatus.PENDING, null);
+    }
+
+    public ReservationRecord(long id, int bookId, String bookTitle, String studentId, LocalDate reservationDate) {
+        this(id, bookId, bookTitle, studentId, reservationDate == null ? null : reservationDate.atStartOfDay(), null, ReservationStatus.PENDING, null);
+    }
+
+    public long getId() {
         return id;
+    }
+
+    public void setId(long id) {
+        this.id = id;
     }
 
     public int getBookId() {
         return bookId;
     }
 
+    public void setBookId(int bookId) {
+        this.bookId = bookId;
+    }
+
     public String getBookTitle() {
         return bookTitle;
+    }
+
+    public void setBookTitle(String bookTitle) {
+        this.bookTitle = bookTitle;
     }
 
     public String getStudentId() {
         return studentId;
     }
 
-    public LocalDate getReservationDate() {
+    public void setStudentId(String studentId) {
+        this.studentId = studentId;
+    }
+
+    public LocalDateTime getReservationDate() {
         return reservationDate;
     }
 
-    public LocalDate getExpiryDate() {
+    public void setReservationDate(LocalDateTime reservationDate) {
+        this.reservationDate = reservationDate;
+    }
+
+    public void setReservationDate(LocalDate reservationDate) {
+        this.reservationDate = reservationDate == null ? null : reservationDate.atStartOfDay();
+    }
+
+    public LocalDateTime getExpiryDate() {
         return expiryDate;
     }
 
-    public void setExpiryDate(LocalDate expiryDate) {
+    public void setExpiryDate(LocalDateTime expiryDate) {
         this.expiryDate = expiryDate;
+    }
+
+    public void setExpiryDate(LocalDate expiryDate) {
+        this.expiryDate = expiryDate == null ? null : expiryDate.atStartOfDay();
     }
 
     public ReservationStatus getStatus() {
@@ -57,5 +100,13 @@ public class ReservationRecord implements Serializable {
 
     public void setStatus(ReservationStatus status) {
         this.status = status;
+    }
+
+    public String getAssignedCopyId() {
+        return assignedCopyId;
+    }
+
+    public void setAssignedCopyId(String assignedCopyId) {
+        this.assignedCopyId = assignedCopyId;
     }
 }

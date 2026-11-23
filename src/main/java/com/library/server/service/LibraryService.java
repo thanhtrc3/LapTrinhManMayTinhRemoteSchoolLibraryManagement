@@ -31,8 +31,8 @@ public class LibraryService {
     private final List<BorrowRecord> borrows;
     private final List<ReservationRecord> reservations;
     private int nextBookId;
-    private int nextBorrowId;
-    private int nextReservationId;
+    private long nextBorrowId;
+    private long nextReservationId;
 
     public LibraryService(DataStorage storage) {
         this.storage = storage;
@@ -41,8 +41,8 @@ public class LibraryService {
         this.borrows = storage.loadBorrows();
         this.reservations = storage.loadReservations();
         this.nextBookId = books.stream().mapToInt(Book::getId).max().orElse(0) + 1;
-        this.nextBorrowId = borrows.stream().mapToInt(BorrowRecord::getId).max().orElse(0) + 1;
-        this.nextReservationId = reservations.stream().mapToInt(ReservationRecord::getId).max().orElse(0) + 1;
+        this.nextBorrowId = borrows.stream().mapToLong(BorrowRecord::getId).max().orElse(0) + 1;
+        this.nextReservationId = reservations.stream().mapToLong(ReservationRecord::getId).max().orElse(0) + 1;
     }
 
     public synchronized User login(String username, String password) {
@@ -121,7 +121,7 @@ public class LibraryService {
         return record;
     }
 
-    public synchronized BorrowRecord returnBook(int recordId, String username) {
+    public synchronized BorrowRecord returnBook(long recordId, String username) {
         BorrowRecord record = findBorrow(recordId);
         if (!record.getStudentId().equals(username)) {
             throw new ServiceException("Đây không phải phiếu mượn của bạn.");
@@ -147,14 +147,14 @@ public class LibraryService {
                 result.add(b);
             }
         }
-        result.sort(Comparator.comparingInt(BorrowRecord::getId).reversed());
+        result.sort(Comparator.comparingLong(BorrowRecord::getId).reversed());
         return result;
     }
 
     public synchronized List<BorrowRecord> allBorrows() {
         refreshOverdue(LocalDate.now());
         List<BorrowRecord> result = new ArrayList<>(borrows);
-        result.sort(Comparator.comparingInt(BorrowRecord::getId).reversed());
+        result.sort(Comparator.comparingLong(BorrowRecord::getId).reversed());
         return result;
     }
 
@@ -190,7 +190,7 @@ public class LibraryService {
         return reservation;
     }
 
-    public synchronized void cancelReservation(int reservationId, String username) {
+    public synchronized void cancelReservation(long reservationId, String username) {
         ReservationRecord reservation = findReservation(reservationId);
         if (!reservation.getStudentId().equals(username)) {
             throw new ServiceException("Đây không phải phiếu đặt trước của bạn.");
@@ -215,7 +215,7 @@ public class LibraryService {
                 result.add(r);
             }
         }
-        result.sort(Comparator.comparingInt(ReservationRecord::getId).reversed());
+        result.sort(Comparator.comparingLong(ReservationRecord::getId).reversed());
         return result;
     }
 
@@ -288,7 +288,7 @@ public class LibraryService {
         for (ReservationRecord r : new ArrayList<>(reservations)) {
             if (r.getStatus() == ReservationStatus.READY
                     && r.getExpiryDate() != null
-                    && r.getExpiryDate().isBefore(today)) {
+                    && r.getExpiryDate().isBefore(today.atStartOfDay())) {
                 r.setStatus(ReservationStatus.EXPIRED);
                 releaseCopy(r.getBookId(), today);
             }
@@ -300,7 +300,7 @@ public class LibraryService {
         ReservationRecord next = reservations.stream()
                 .filter(r -> r.getBookId() == bookId && r.getStatus() == ReservationStatus.PENDING)
                 .min(Comparator.comparing(ReservationRecord::getReservationDate)
-                        .thenComparingInt(ReservationRecord::getId))
+                        .thenComparingLong(ReservationRecord::getId))
                 .orElse(null);
         if (next != null) {
             next.setStatus(ReservationStatus.READY);
@@ -324,14 +324,14 @@ public class LibraryService {
                 .orElseThrow(() -> new ServiceException("Không tìm thấy sách id=" + bookId));
     }
 
-    private BorrowRecord findBorrow(int recordId) {
+    private BorrowRecord findBorrow(long recordId) {
         return borrows.stream()
                 .filter(b -> b.getId() == recordId)
                 .findFirst()
                 .orElseThrow(() -> new ServiceException("Không tìm thấy phiếu mượn id=" + recordId));
     }
 
-    private ReservationRecord findReservation(int reservationId) {
+    private ReservationRecord findReservation(long reservationId) {
         return reservations.stream()
                 .filter(r -> r.getId() == reservationId)
                 .findFirst()

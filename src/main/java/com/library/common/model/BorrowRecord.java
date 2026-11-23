@@ -6,43 +6,83 @@ import java.time.LocalDate;
 public class BorrowRecord implements Serializable {
     private static final long serialVersionUID = 1L;
 
-    private final int id;
-    private final int bookId;
-    private final String bookTitle;
-    private final String studentId;
-    private final LocalDate borrowDate;
+    private long id;
+    private String copyId;
+    private int bookId;
+    private String bookTitle;
+    private String studentId;
+    private LocalDate borrowDate;
     private LocalDate dueDate;
     private LocalDate returnDate;
     private BorrowStatus status;
+    private int renewCount;
 
-    public BorrowRecord(int id, int bookId, String bookTitle, String studentId, LocalDate borrowDate, LocalDate dueDate) {
+    public BorrowRecord() {
+    }
+
+    public BorrowRecord(long id, String copyId, int bookId, String bookTitle, String studentId, LocalDate borrowDate, LocalDate dueDate, LocalDate returnDate, BorrowStatus status, int renewCount) {
         this.id = id;
+        this.copyId = copyId;
         this.bookId = bookId;
         this.bookTitle = bookTitle;
         this.studentId = studentId;
         this.borrowDate = borrowDate;
         this.dueDate = dueDate;
-        this.status = BorrowStatus.BORROWING;
+        this.returnDate = returnDate;
+        this.status = status;
+        this.renewCount = renewCount;
     }
 
-    public int getId() {
+    public BorrowRecord(long id, int bookId, String bookTitle, String studentId, LocalDate borrowDate, LocalDate dueDate) {
+        this(id, "BK" + bookId + "-C01", bookId, bookTitle, studentId, borrowDate, dueDate, null, BorrowStatus.BORROWING, 0);
+    }
+
+    public long getId() {
         return id;
+    }
+
+    public void setId(long id) {
+        this.id = id;
+    }
+
+    public String getCopyId() {
+        return copyId;
+    }
+
+    public void setCopyId(String copyId) {
+        this.copyId = copyId;
     }
 
     public int getBookId() {
         return bookId;
     }
 
+    public void setBookId(int bookId) {
+        this.bookId = bookId;
+    }
+
     public String getBookTitle() {
         return bookTitle;
+    }
+
+    public void setBookTitle(String bookTitle) {
+        this.bookTitle = bookTitle;
     }
 
     public String getStudentId() {
         return studentId;
     }
 
+    public void setStudentId(String studentId) {
+        this.studentId = studentId;
+    }
+
     public LocalDate getBorrowDate() {
         return borrowDate;
+    }
+
+    public void setBorrowDate(LocalDate borrowDate) {
+        this.borrowDate = borrowDate;
     }
 
     public LocalDate getDueDate() {
@@ -67,5 +107,13 @@ public class BorrowRecord implements Serializable {
 
     public void setStatus(BorrowStatus status) {
         this.status = status;
+    }
+
+    public int getRenewCount() {
+        return renewCount;
+    }
+
+    public void setRenewCount(int renewCount) {
+        this.renewCount = renewCount;
     }
 }
