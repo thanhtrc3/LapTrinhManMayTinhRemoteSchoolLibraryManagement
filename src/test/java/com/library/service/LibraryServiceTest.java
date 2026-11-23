@@ -87,7 +87,7 @@ public class LibraryServiceTest {
                 .orElseThrow();
         check(firstAfterReturn.getStatus() == ReservationStatus.READY,
                 "người đặt đầu tiên được giữ chỗ khi sách về");
-        check(firstAfterReturn.getExpiryDate().equals(LocalDate.now().plusDays(LibraryService.HOLD_DAYS)),
+        check(firstAfterReturn.getExpiryDate().toLocalDate().equals(LocalDate.now().plusDays(LibraryService.HOLD_DAYS)),
                 "hạn nhận = hôm nay + " + LibraryService.HOLD_DAYS + " ngày");
         check(book(service, hot.getId()).getAvailableCopies() == 0,
                 "bản giữ chỗ không bị trả về kho");

@@ -59,7 +59,7 @@ public class ServerNetworkTest {
             Response borrow = client.send(CommandType.BORROW,
                     Map.of("username", "sv001", "bookId", 1, "days", 7));
             check(borrow.isOk(), "mượn sách qua TCP");
-            int recordId = ((BorrowRecord) borrow.getData()).getId();
+            long recordId = ((BorrowRecord) borrow.getData()).getId();
             check(realtime.await(3, TimeUnit.SECONDS), "client khác nhận realtime khi có người mượn sách");
 
             Response returns = client.send(CommandType.RETURN_BOOK,
