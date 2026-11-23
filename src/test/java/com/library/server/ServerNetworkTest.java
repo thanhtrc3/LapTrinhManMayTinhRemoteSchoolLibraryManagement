@@ -1,4 +1,4 @@
-package com.library;
+package com.library.server;
 
 import com.library.client.network.LibraryClient;
 import com.library.common.model.BorrowRecord;
@@ -9,20 +9,28 @@ import com.library.server.network.LibraryServer;
 import com.library.server.service.LibraryService;
 import com.library.server.storage.DataStorage;
 
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
-/** Kiểm tra nhanh đường truyền TCP thật: server + client + các lệnh chính + realtime. */
-public class NetworkSelfCheck {
-    private static final int PORT = 18888;
-    private static int passed;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-    public static void main(String[] args) throws Exception {
+/** Kiểm tra đường truyền TCP thật: server + client + các lệnh chính + realtime. */
+public class ServerNetworkTest {
+    private static final int PORT = 18888;
+    private final List<String> failures = new ArrayList<>();
+    private int total;
+
+    @Test
+    void networkFlow() throws Exception {
         Path dir = Files.createTempDirectory("library-net-check");
         LibraryService service = new LibraryService(new DataStorage(dir.toString()));
         LibraryServer server = new LibraryServer(service, PORT);
@@ -69,8 +77,6 @@ public class NetworkSelfCheck {
         } finally {
             server.close();
         }
-
-        System.out.println("NETWORK SELF-CHECK OK (" + passed + " kiểm tra)");
     }
 
     private static LibraryClient connectWithRetry() throws Exception {
@@ -86,11 +92,16 @@ public class NetworkSelfCheck {
         throw last;
     }
 
-    private static void check(boolean condition, String label) {
+    private void check(boolean condition, String label) {
+        total++;
         if (!condition) {
-            throw new IllegalStateException("FAIL: " + label);
+            failures.add(label);
         }
-        passed++;
-        System.out.println("  ok - " + label);
+    }
+
+    @AfterEach
+    void reportFailures() {
+        assertTrue(failures.isEmpty(),
+                () -> "Hỏng " + failures.size() + "/" + total + ":\n - " + String.join("\n - ", failures));
     }
 }

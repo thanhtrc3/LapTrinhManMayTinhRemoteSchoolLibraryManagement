@@ -1,4 +1,4 @@
-package com.library;
+package com.library.service;
 
 import com.library.common.model.Book;
 import com.library.common.model.BorrowRecord;
@@ -9,18 +9,24 @@ import com.library.server.service.LibraryService;
 import com.library.server.service.ServiceException;
 import com.library.server.storage.DataStorage;
 
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 
-/**
- * Kiểm tra nhanh nghiệp vụ, không cần server và không cần JUnit.
- * Chạy: test.bat
- */
-public class SelfCheck {
-    private static int passed;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-    public static void main(String[] args) throws Exception {
+/** Kiểm tra nghiệp vụ, không cần server. Chạy: mvnw.cmd test */
+public class LibraryServiceTest {
+    private final List<String> failures = new ArrayList<>();
+    private int total;
+
+    @Test
+    void businessFlow() throws Exception {
         Path dir = Files.createTempDirectory("library-check");
         LibraryService service = new LibraryService(new DataStorage(dir.toString()));
 
@@ -108,7 +114,6 @@ public class SelfCheck {
         check(book(service, hot.getId()).getAvailableCopies() == 1,
                 "hủy giữ chỗ thì bản sao về kho");
 
-        System.out.println("SELF-CHECK OK (" + passed + " kiểm tra)");
     }
 
     private static Book book(LibraryService service, int id) {
@@ -118,21 +123,27 @@ public class SelfCheck {
                 .orElseThrow(() -> new IllegalStateException("Thiếu sách id=" + id));
     }
 
-    private static void check(boolean condition, String label) {
+    private void check(boolean condition, String label) {
+        total++;
         if (!condition) {
-            throw new IllegalStateException("FAIL: " + label);
+            failures.add(label);
         }
-        passed++;
-        System.out.println("  ok - " + label);
     }
 
-    private static void expectFail(Runnable action, String label) {
+    private void expectFail(Runnable action, String label) {
+        total++;
         try {
             action.run();
-        } catch (ServiceException e) {
-            check(true, label + " (" + e.getMessage() + ")");
-            return;
+            failures.add("không báo lỗi: " + label);
+        } catch (ServiceException ignored) {
+            // đúng như mong đợi
         }
-        throw new IllegalStateException("FAIL (không báo lỗi): " + label);
+    }
+
+    /** Gom hết lỗi rồi báo một lần, để một lượt chạy thấy đủ cả danh sách hỏng. */
+    @AfterEach
+    void reportFailures() {
+        assertTrue(failures.isEmpty(),
+                () -> "Hỏng " + failures.size() + "/" + total + ":\n - " + String.join("\n - ", failures));
     }
 }

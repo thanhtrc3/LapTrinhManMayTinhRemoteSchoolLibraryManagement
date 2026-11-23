@@ -12,15 +12,19 @@ audit log, quét quá hạn 00:00…) để làm sau.
 
 - JDK 17 trở lên. Các file `.bat` tự tìm JDK theo thứ tự: `javac` trên PATH →
   `JAVA_HOME` → `C:\Program Files\Java\*` → Android Studio JBR → Eclipse Adoptium.
+- Không cần cài Maven: `mvnw.cmd` (Maven Wrapper) tự tải Maven 3.9.9 về `~/.m2`
+  ở lần chạy đầu tiên.
 
 ## Chạy
 
 ```bat
-build.bat        :: biên dịch vào bin\
+build.bat        :: build vào target\classes
 run-server.bat   :: khởi động server, mặc định cổng 8888
 run-client.bat   :: mở giao diện đăng nhập
-test.bat         :: chạy kiểm tra nghiệp vụ + kiểm tra TCP
+test.bat         :: chạy toàn bộ test JUnit
 ```
+
+Hoặc gọi Maven trực tiếp: `mvnw.cmd test`, `mvnw.cmd -Dtest=LibraryServiceTest test`.
 
 Chạy server ở cổng khác: `run-server.bat 9000` rồi nhập cổng 9000 ở màn hình đăng nhập.
 
@@ -68,8 +72,8 @@ src/main/java/com/library/
   client/         LibraryClient (TCP), ui/ (LoginFrame, StudentDashboard,
                   LibrarianDashboard, BookDialog)
 src/test/java/com/library/
-  SelfCheck.java         kiểm tra nghiệp vụ
-  NetworkSelfCheck.java  kiểm tra server + client qua TCP thật
+  service/LibraryServiceTest.java   kiểm tra nghiệp vụ (JUnit 5)
+  server/ServerNetworkTest.java     kiểm tra server + client qua TCP thật (JUnit 5)
 ```
 
 ## Ghi chú triển khai
@@ -85,4 +89,4 @@ src/test/java/com/library/
   trong lúc chờ; chuyển sang luồng nền khi cần.
 - Chưa có session/token: mỗi lệnh tin vào `username` client gửi lên. Đủ cho demo,
   không đủ cho môi trường thật.
-- Không dùng Maven/JUnit cho gọn; `build.bat` gọi `javac` trực tiếp.
+- Dùng Maven Wrapper + JUnit 5: `mvnw.cmd test` chạy toàn bộ test, `mvnw.cmd -Dtest=ServerNetworkTest test` chạy riêng một lớp. Mỗi lớp test gom hết lỗi rồi báo một lần nên một lượt chạy thấy đủ danh sách hỏng.
