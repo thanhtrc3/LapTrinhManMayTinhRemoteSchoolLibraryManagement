@@ -5,10 +5,6 @@ import java.io.Serializable;
 public class RealtimeEvent implements Serializable {
     private static final long serialVersionUID = 1L;
 
-    public enum Type {
-        DATA_CHANGED
-    }
-
     private EventType type;
     private String targetUsername;
     private String message;
@@ -28,24 +24,12 @@ public class RealtimeEvent implements Serializable {
         this(type, null, message, null);
     }
 
-    public RealtimeEvent(Type type, String message) {
-        this(EventType.BOOKS_CHANGED, null, message, null);
-    }
-
     public EventType getType() {
         return type;
     }
 
     public void setType(EventType type) {
         this.type = type;
-    }
-
-    public void setType(Type type) {
-        this.type = type == Type.DATA_CHANGED ? EventType.BOOKS_CHANGED : null;
-    }
-
-    public Type getLegacyType() {
-        return type == null ? null : Type.DATA_CHANGED;
     }
 
     public String getTargetUsername() {

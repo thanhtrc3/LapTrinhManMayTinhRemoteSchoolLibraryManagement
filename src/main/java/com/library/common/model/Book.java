@@ -15,8 +15,6 @@ public class Book implements Serializable {
     private int availableCopies;
     private boolean hasEbook;
     private String ebookFileName;
-    /** Số bản đang giữ chỗ cho người đặt trước; chỉ dùng để hiển thị trên bảng sách. */
-    private int heldCopies;
 
     public Book() {
     }
@@ -32,10 +30,6 @@ public class Book implements Serializable {
         this.availableCopies = availableCopies;
         this.hasEbook = hasEbook;
         this.ebookFileName = ebookFileName;
-    }
-
-    public Book(int id, String title, String author, String category, int publishYear, int totalCopies) {
-        this(id, "ISBN-" + id, title, author, category, publishYear, totalCopies, totalCopies, false, null);
     }
 
     public int getId() {
@@ -106,10 +100,6 @@ public class Book implements Serializable {
         return hasEbook;
     }
 
-    public boolean getHasEbook() {
-        return hasEbook;
-    }
-
     public void setHasEbook(boolean hasEbook) {
         this.hasEbook = hasEbook;
     }
@@ -120,14 +110,6 @@ public class Book implements Serializable {
 
     public void setEbookFileName(String ebookFileName) {
         this.ebookFileName = ebookFileName;
-    }
-
-    public int getHeldCopies() {
-        return heldCopies;
-    }
-
-    public void setHeldCopies(int heldCopies) {
-        this.heldCopies = heldCopies;
     }
 
     @Override

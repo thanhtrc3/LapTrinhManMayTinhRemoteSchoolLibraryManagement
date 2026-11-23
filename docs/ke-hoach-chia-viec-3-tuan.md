@@ -101,7 +101,7 @@ public enum CommandType { LOGIN, LOGOUT, PING, GET_BOOKS, GET_COPIES, GET_RECOMM
   RECORD_SEARCH, BORROW, RETURN, RENEW, RESERVE, CANCEL_RESERVATION, GET_MY_BORROWS,
   GET_MY_RESERVATIONS, GET_ALL_BORROWS, GET_ALL_RESERVATIONS, DOWNLOAD_EBOOK, GET_AUDIT_LOGS,
   GET_BLOCKED_USERS, UNBLOCK_USER, ADD_BOOK, UPDATE_BOOK, DELETE_BOOK, ADD_COPY, REMOVE_COPY,
-  ANNOUNCE, GET_SERVER_STATS, QUICK_SCAN }
+  ANNOUNCE, GET_SERVER_STATS, QUICK_SCAN, GET_USERS, ADD_USER, RESET_PASSWORD }
 
 public enum ResponseStatus { OK, ERROR, UNAUTHORIZED, NOT_FOUND, OUT_OF_STOCK, BLOCKED, QUOTA_EXCEEDED }
 
@@ -149,6 +149,7 @@ public interface EventPublisher { void publish(RealtimeEvent event); }
 | Command | payload key | `data` trả về |
 |---|---|---|
 | `LOGIN` | `username`, `password` | `User` |
+| `LOGOUT` | — | — |
 | `PING` | — | `Long` (server time millis) |
 | `GET_BOOKS` | `keyword` (null được), `category` (null được), `onlyAvailable` (Boolean) | `List<Book>` |
 | `GET_COPIES` | `bookId` | `List<BookCopy>` |
@@ -181,9 +182,9 @@ public interface EventPublisher { void publish(RealtimeEvent event); }
 
 ### 2.4 Nghiệm thu D1 (cả nhóm)
 
-- [ ] `mvnw.cmd test` chạy xanh với 2 test: `SerializationTest` (serialize/deserialize `Request` + `Book`) và `FuzzySearchTest`.
-- [ ] `FuzzySearchUtil.normalize("Lập Trình Mạng")` → `"lap trinh mang"`; `matches("lap trinh mag", "Lập trình mạng")` → `true`; `matches("toan roi rac", "Lập trình mạng")` → `false`.
-- [ ] Merge xong, tag git `contract-v1`, cả 3 người `git pull` trước khi làm D2.
+- [x] `mvnw.cmd test` chạy xanh với 2 test: `SerializationTest` (serialize/deserialize `Request` + `Book`) và `FuzzySearchTest`.
+- [x] `FuzzySearchUtil.normalize("Lập Trình Mạng")` → `"lap trinh mang"`; `matches("lap trinh mag", "Lập trình mạng")` → `true`; `matches("toan roi rac", "Lập trình mạng")` → `false`.
+- [x] Merge xong, tag git `contract-v1` (cả 3 người `git pull` để đồng bộ).
 
 ---
 

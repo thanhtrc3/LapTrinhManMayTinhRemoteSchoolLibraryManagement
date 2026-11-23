@@ -36,7 +36,7 @@ public class ServerStats implements Serializable {
     }
 
     public void setClientAddresses(List<String> clientAddresses) {
-        this.clientAddresses = clientAddresses == null ? new ArrayList<>() : clientAddresses;
+        this.clientAddresses = clientAddresses == null ? new ArrayList<>() : new ArrayList<>(clientAddresses);
     }
 
     public long getAvgPingMs() {
@@ -53,5 +53,12 @@ public class ServerStats implements Serializable {
 
     public void setTotalBytesSent(long totalBytesSent) {
         this.totalBytesSent = totalBytesSent;
+    }
+
+    private Object readResolve() {
+        if (clientAddresses == null) {
+            clientAddresses = new ArrayList<>();
+        }
+        return this;
     }
 }

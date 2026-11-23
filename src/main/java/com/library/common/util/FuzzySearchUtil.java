@@ -73,11 +73,10 @@ public class FuzzySearchUtil {
      * So khớp mờ:
      * Chuẩn hoá keyword và từng field, trả về true nếu:
      * - keyword rỗng: khớp tất cả
-     * - 1 field chứa keyword
-     * - tiền tố khớp (field bắt đầu bằng keyword hoặc có từ trong field bắt đầu bằng keyword)
-     * - Levenshtein(keyword, field) <= 2
-     * - Levenshtein(keyword, từ bất kỳ trong field) <= 2
-     * - Hoặc Levenshtein(keyword, cụm từ con cùng số từ trong field) <= 2 (sliding window)
+     * - 1 field chứa keyword hoặc bắt đầu bằng keyword
+     * - toàn field khớp với Levenshtein <= 2 (khi cả hai đủ dài >= 3)
+     * - có từ trong field bắt đầu bằng keyword hoặc khớp Levenshtein giới hạn theo độ dài từ
+     * - cụm từ con (sliding window) khớp Levenshtein <= 2
      */
     public static boolean matches(String keyword, String... fields) {
         if (keyword == null || keyword.trim().isEmpty()) {
@@ -109,19 +108,21 @@ public class FuzzySearchUtil {
                 return true;
             }
 
-            // 2. Toàn bộ field so với keyword có khoảng cách Levenshtein <= 2
-            if (levenshtein(normKw, normField) <= 2) {
+            // 2. Toàn bộ field so với keyword có khoảng cách Levenshtein <= 2 (chỉ khi đủ dài >= 3)
+            if (Math.min(normKw.length(), normField.length()) >= 3
+                    && levenshtein(normKw, normField) <= 2) {
                 return true;
             }
 
             String[] fieldWords = normField.split(" ");
 
-            // 3. Tiền tố khớp hoặc Levenshtein <= 2 với từng từ trong field
+            // 3. Tiền tố khớp hoặc Levenshtein giới hạn theo độ dài với từng từ trong field
             for (String word : fieldWords) {
-                if (word.startsWith(normKw) || normKw.startsWith(word)) {
+                if (word.startsWith(normKw)) {
                     return true;
                 }
-                if (levenshtein(normKw, word) <= 2) {
+                int maxDist = Math.min(2, Math.max(0, Math.min(normKw.length(), word.length()) - 1));
+                if (maxDist > 0 && levenshtein(normKw, word) <= maxDist) {
                     return true;
                 }
             }

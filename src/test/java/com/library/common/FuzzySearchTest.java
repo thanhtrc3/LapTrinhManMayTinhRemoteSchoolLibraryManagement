@@ -52,6 +52,11 @@ public class FuzzySearchTest {
         assertFalse(FuzzySearchUtil.matches("toan roi rac", "Lập trình mạng"));
         assertFalse(FuzzySearchUtil.matches("vat ly dai cuong", "Lập trình Java"));
         assertFalse(FuzzySearchUtil.matches("tri tue nhan tao", "Cơ sở dữ liệu quan hệ"));
+        // Không nhận nhầm từ 1-2 ký tự ("va", "co", "so") thành khớp
+        assertFalse(FuzzySearchUtil.matches("vat ly dai cuong", "Cấu trúc dữ liệu và Giải thuật"));
+        assertFalse(FuzzySearchUtil.matches("sql", "Cơ sở dữ liệu"));
+        assertFalse(FuzzySearchUtil.matches("ai", "Cơ sở dữ liệu"));
+        assertFalse(FuzzySearchUtil.matches("ml", "Cơ sở dữ liệu và Giải thuật"));
     }
 
     @Test

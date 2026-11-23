@@ -20,10 +20,6 @@ public class Request implements Serializable {
         setPayload(payload);
     }
 
-    public static Request of(CommandType command, Map<String, Object> payload) {
-        return new Request(command, payload);
-    }
-
     public long getRequestId() {
         return requestId;
     }
@@ -45,23 +41,7 @@ public class Request implements Serializable {
     }
 
     public void setPayload(Map<String, Object> payload) {
-        this.payload = payload == null ? new HashMap<>() : payload;
-    }
-
-    public CommandType getType() {
-        return command;
-    }
-
-    public void setType(CommandType type) {
-        this.command = type;
-    }
-
-    public Map<String, Object> getData() {
-        return payload;
-    }
-
-    public void setData(Map<String, Object> data) {
-        setPayload(data);
+        this.payload = payload == null ? new HashMap<>() : new HashMap<>(payload);
     }
 
     private Object readResolve() {

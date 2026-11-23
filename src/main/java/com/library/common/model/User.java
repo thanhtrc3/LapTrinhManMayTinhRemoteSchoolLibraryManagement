@@ -29,10 +29,6 @@ public class User implements Serializable {
         this.blocked = blocked;
     }
 
-    public User(String username, String password, String fullName, Role role) {
-        this(username, password, fullName, role, null, 3, 0, false);
-    }
-
     public String getUsername() {
         return username;
     }
@@ -90,10 +86,6 @@ public class User implements Serializable {
     }
 
     public boolean isBlocked() {
-        return blocked;
-    }
-
-    public boolean getBlocked() {
         return blocked;
     }
 

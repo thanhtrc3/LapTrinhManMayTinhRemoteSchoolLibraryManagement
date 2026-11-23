@@ -1,7 +1,6 @@
 package com.library.common.model;
 
 import java.io.Serializable;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 public class ReservationRecord implements Serializable {
@@ -32,10 +31,6 @@ public class ReservationRecord implements Serializable {
 
     public ReservationRecord(long id, int bookId, String bookTitle, String studentId, LocalDateTime reservationDate) {
         this(id, bookId, bookTitle, studentId, reservationDate, null, ReservationStatus.PENDING, null);
-    }
-
-    public ReservationRecord(long id, int bookId, String bookTitle, String studentId, LocalDate reservationDate) {
-        this(id, bookId, bookTitle, studentId, reservationDate == null ? null : reservationDate.atStartOfDay(), null, ReservationStatus.PENDING, null);
     }
 
     public long getId() {
@@ -78,20 +73,12 @@ public class ReservationRecord implements Serializable {
         this.reservationDate = reservationDate;
     }
 
-    public void setReservationDate(LocalDate reservationDate) {
-        this.reservationDate = reservationDate == null ? null : reservationDate.atStartOfDay();
-    }
-
     public LocalDateTime getExpiryDate() {
         return expiryDate;
     }
 
     public void setExpiryDate(LocalDateTime expiryDate) {
         this.expiryDate = expiryDate;
-    }
-
-    public void setExpiryDate(LocalDate expiryDate) {
-        this.expiryDate = expiryDate == null ? null : expiryDate.atStartOfDay();
     }
 
     public ReservationStatus getStatus() {

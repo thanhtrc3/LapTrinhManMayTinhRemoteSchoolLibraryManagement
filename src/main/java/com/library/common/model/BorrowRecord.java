@@ -33,10 +33,6 @@ public class BorrowRecord implements Serializable {
         this.renewCount = renewCount;
     }
 
-    public BorrowRecord(long id, int bookId, String bookTitle, String studentId, LocalDate borrowDate, LocalDate dueDate) {
-        this(id, "BK" + bookId + "-C01", bookId, bookTitle, studentId, borrowDate, dueDate, null, BorrowStatus.BORROWING, 0);
-    }
-
     public long getId() {
         return id;
     }

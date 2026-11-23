@@ -1,16 +1,15 @@
 package com.library.common;
 
 import com.library.common.model.*;
-import com.library.common.net.CommandType;
-import com.library.common.net.Request;
-import com.library.common.net.Response;
-import com.library.common.net.ResponseStatus;
+import com.library.common.net.*;
+import com.library.server.service.LibraryException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.io.*;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -34,17 +33,62 @@ public class SerializationTest {
     @DisplayName("Kiểm tra tuần tự hóa Request và Response")
     void testRequestAndResponseSerialization() throws Exception {
         Request req = new Request(CommandType.LOGIN, Map.of("username", "sv001", "password", "123"));
+        req.setRequestId(7L);
         Request reqResult = serializeAndDeserialize(req);
         assertNotNull(reqResult);
-        assertEquals(CommandType.LOGIN, reqResult.getType());
-        assertEquals("sv001", reqResult.getData().get("username"));
+        assertEquals(7L, reqResult.getRequestId());
+        assertEquals(CommandType.LOGIN, reqResult.getCommand());
+        assertEquals("sv001", reqResult.getPayload().get("username"));
 
-        Response res = new Response(ResponseStatus.OK, "Thành công", "testData");
+        Request pingReq = new Request(CommandType.PING, null);
+        Request pingResult = serializeAndDeserialize(pingReq);
+        assertNotNull(pingResult.getPayload());
+        assertTrue(pingResult.getPayload().isEmpty());
+
+        Response res = new Response(7L, ResponseStatus.OK, "Thành công", "testData");
         Response resResult = serializeAndDeserialize(res);
         assertNotNull(resResult);
+        assertEquals(7L, resResult.getRequestId());
         assertEquals(ResponseStatus.OK, resResult.getStatus());
+        assertTrue(resResult.isOk());
         assertEquals("Thành công", resResult.getMessage());
         assertEquals("testData", resResult.getData());
+    }
+
+    @Test
+    @DisplayName("Kiểm tra tuần tự hóa MulticastMessage, RealtimeEvent, ServerStats và LibraryException")
+    void testProtocolMessagesAndException() throws Exception {
+        MulticastMessage msg = new MulticastMessage("Thông báo", "Thư viện đóng cửa sau 15 phút", 1700000000000L, "admin");
+        MulticastMessage msgResult = serializeAndDeserialize(msg);
+        assertNotNull(msgResult);
+        assertEquals("Thông báo", msgResult.getTitle());
+        assertEquals("Thư viện đóng cửa sau 15 phút", msgResult.getContent());
+        assertEquals(1700000000000L, msgResult.getSentAt());
+        assertEquals("admin", msgResult.getSender());
+
+        RealtimeEvent event = new RealtimeEvent(EventType.BOOKS_CHANGED, "sv001", "Cập nhật sách", 42);
+        RealtimeEvent eventResult = serializeAndDeserialize(event);
+        assertNotNull(eventResult);
+        assertEquals(EventType.BOOKS_CHANGED, eventResult.getType());
+        assertEquals("sv001", eventResult.getTargetUsername());
+        assertEquals("Cập nhật sách", eventResult.getMessage());
+        assertEquals(42, eventResult.getData());
+
+        ServerStats stats = new ServerStats(2, List.of("127.0.0.1:50001", "127.0.0.1:50002"), 12L, 4096L);
+        ServerStats statsResult = serializeAndDeserialize(stats);
+        assertNotNull(statsResult);
+        assertEquals(2, statsResult.getOnlineClients());
+        assertEquals(List.of("127.0.0.1:50001", "127.0.0.1:50002"), statsResult.getClientAddresses());
+        assertEquals(12L, statsResult.getAvgPingMs());
+        assertEquals(4096L, statsResult.getTotalBytesSent());
+
+        ServerStats emptyStats = serializeAndDeserialize(new ServerStats(0, null, 0L, 0L));
+        assertNotNull(emptyStats.getClientAddresses());
+        assertTrue(emptyStats.getClientAddresses().isEmpty());
+
+        LibraryException ex = new LibraryException(ResponseStatus.OUT_OF_STOCK, "Sách đã hết");
+        assertEquals(ResponseStatus.OUT_OF_STOCK, ex.getStatus());
+        assertEquals("Sách đã hết", ex.getMessage());
     }
 
     @Test
