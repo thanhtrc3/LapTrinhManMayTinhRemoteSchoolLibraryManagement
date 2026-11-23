@@ -19,3 +19,5 @@ Desktop.ini
 
 # Runtime data files (optional)
 *.log
+data/
+sources.txt
