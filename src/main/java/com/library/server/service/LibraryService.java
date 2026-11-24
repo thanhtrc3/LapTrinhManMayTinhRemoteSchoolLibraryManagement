@@ -28,6 +28,9 @@ public class LibraryService {
     private final ConcurrentHashMap<Integer, ReentrantLock> bookLocks = new ConcurrentHashMap<>();
     private final Object globalLock = new Object();
 
+    // Lưu các reservationId đã phát cảnh báo HOLD_EXPIRING (chỉ phát đúng 1 lần khi còn <= 6h)
+    private final Set<Long> expiringNotifiedIds = ConcurrentHashMap.newKeySet();
+
     private final AtomicLong nextBorrowId = new AtomicLong(System.currentTimeMillis());
     private final AtomicLong nextReservationId = new AtomicLong(System.currentTimeMillis());
     private final AtomicLong nextAuditId = new AtomicLong(System.currentTimeMillis());
@@ -58,7 +61,7 @@ public class LibraryService {
     }
 
     private void publishEvent(RealtimeEvent event) {
-        if (publisher != null) {
+        if (publisher != null && event != null) {
             publisher.publish(event);
         }
     }
@@ -191,6 +194,9 @@ public class LibraryService {
         ReentrantLock lock = getLock(bookId);
         lock.lock();
         try {
+            Book updatedBook;
+            BorrowRecord record;
+            String auditCopyId;
             synchronized (globalLock) {
                 List<User> users = storage.loadUsers();
                 User user = users.stream().filter(u -> u.getUsername().equals(studentId)).findFirst()
@@ -235,6 +241,7 @@ public class LibraryService {
                     targetCopy = copies.stream().filter(c -> c.getCopyId().equals(reservedCopyId)).findFirst().orElse(null);
                     if (targetCopy != null) {
                         myReservation.get().setStatus(ReservationStatus.FULFILLED);
+                        expiringNotifiedIds.remove(myReservation.get().getId());
                         storage.saveReservations(reservations);
                     }
                 }
@@ -262,7 +269,7 @@ public class LibraryService {
 
                 // Giới hạn số ngày mượn từ 1 đến 30 ngày (mặc định 14 ngày nếu ngoài dải)
                 int clampedDays = (days <= 0 || days > 30) ? 14 : days;
-                BorrowRecord record = new BorrowRecord(
+                record = new BorrowRecord(
                         nextBorrowId.incrementAndGet(),
                         targetCopy.getCopyId(),
                         bookId,
@@ -276,65 +283,77 @@ public class LibraryService {
                 );
                 borrows.add(record);
                 storage.saveBorrows(borrows);
-
-                addAudit(AuditAction.BORROW, studentId, "Mượn sách '" + book.getTitle() + "', bản sao: " + targetCopy.getCopyId());
-                publishEvent(new RealtimeEvent(EventType.BOOKS_CHANGED, null, "Cập nhật số lượng sách", book));
-                publishEvent(new RealtimeEvent(EventType.BORROW_CHANGED, studentId, "Mượn sách thành công", record));
-
-                return record;
+                updatedBook = book;
+                auditCopyId = targetCopy.getCopyId();
             }
+
+            addAudit(AuditAction.BORROW, studentId, "Mượn sách '" + updatedBook.getTitle() + "', bản sao: " + auditCopyId);
+            publishEvent(new RealtimeEvent(EventType.BOOKS_CHANGED, null, "Cập nhật số lượng sách", updatedBook));
+            publishEvent(new RealtimeEvent(EventType.BORROW_CHANGED, studentId, "Mượn sách thành công", record));
+
+            return record;
         } finally {
             lock.unlock();
         }
     }
 
     public BorrowRecord returnBook(String studentId, String copyId) throws LibraryException {
+        BorrowRecord record;
+        Book updatedBook = null;
+        String blockedUsername = null;
+
         synchronized (globalLock) {
             List<BorrowRecord> borrows = storage.loadBorrows();
-            BorrowRecord record = borrows.stream()
+            record = borrows.stream()
                     .filter(b -> b.getCopyId().equalsIgnoreCase(copyId) && (b.getStatus() == BorrowStatus.BORROWING || b.getStatus() == BorrowStatus.OVERDUE))
                     .findFirst()
                     .orElseThrow(() -> new LibraryException(ResponseStatus.NOT_FOUND, "Không tìm thấy lượt mượn đang hoạt động cho bản sao " + copyId));
+
+            List<User> users = storage.loadUsers();
+            if (studentId != null && !studentId.isBlank() && !record.getStudentId().equalsIgnoreCase(studentId)) {
+                User caller = users.stream().filter(u -> u.getUsername().equalsIgnoreCase(studentId)).findFirst().orElse(null);
+                if (caller == null || caller.getRole() != Role.LIBRARIAN) {
+                    throw new LibraryException(ResponseStatus.UNAUTHORIZED, "Bạn không thể trả sách của sinh viên khác");
+                }
+            }
 
             record.setStatus(BorrowStatus.RETURNED);
             record.setReturnDate(LocalDate.now());
 
             // Kiểm tra quá hạn -> ghi nhận vi phạm (3-strike)
             if (LocalDate.now().isAfter(record.getDueDate())) {
-                List<User> users = storage.loadUsers();
-                User user = users.stream().filter(u -> u.getUsername().equals(record.getStudentId())).findFirst().orElse(null);
-                if (user != null) {
-                    user.setViolationCount(user.getViolationCount() + 1);
-                    addAudit(AuditAction.OVERDUE_STRIKE, record.getStudentId(), "Quá hạn trả sách " + copyId + ", vi phạm lần " + user.getViolationCount());
-                    if (user.getViolationCount() >= 3) {
-                        user.setBlocked(true);
-                        publishEvent(new RealtimeEvent(EventType.VIOLATION_BLOCKED, user.getUsername(), "Tài khoản bị khóa do vi phạm quá hạn 3 lần", null));
+                User borrower = users.stream().filter(u -> u.getUsername().equals(record.getStudentId())).findFirst().orElse(null);
+                if (borrower != null) {
+                    borrower.setViolationCount(borrower.getViolationCount() + 1);
+                    addAudit(AuditAction.OVERDUE_STRIKE, record.getStudentId(), "Quá hạn trả sách " + copyId + ", vi phạm lần " + borrower.getViolationCount());
+                    if (borrower.getViolationCount() >= 3) {
+                        borrower.setBlocked(true);
+                        blockedUsername = borrower.getUsername();
                     }
                     storage.saveUsers(users);
                 }
             }
 
             storage.saveBorrows(borrows);
-
-            // Tự động phân phối bản sao vừa trả (Auto-allocation D5)
-            assignReservedCopy(record.getBookId(), copyId);
-
-            // Cập nhật lại số lượng sách
-            List<Book> books = storage.loadBooks();
-            List<BookCopy> copies = storage.loadCopies();
-            Book book = books.stream().filter(b -> b.getId() == record.getBookId()).findFirst().orElse(null);
-            if (book != null) {
-                int availableCount = (int) copies.stream().filter(c -> c.getBookId() == record.getBookId() && c.getStatus() == CopyStatus.AVAILABLE).count();
-                book.setAvailableCopies(availableCount);
-                storage.saveBooks(books);
-            }
-
-            addAudit(AuditAction.RETURN, studentId != null ? studentId : record.getStudentId(), "Trả sách bản sao: " + copyId);
-            publishEvent(new RealtimeEvent(EventType.BOOKS_CHANGED, null, "Cập nhật số lượng sách", book));
-            publishEvent(new RealtimeEvent(EventType.BORROW_CHANGED, record.getStudentId(), "Trả sách thành công", record));
-
-            return record;
         }
+
+        if (blockedUsername != null) {
+            publishEvent(new RealtimeEvent(EventType.VIOLATION_BLOCKED, blockedUsername, "Tài khoản bị khóa do vi phạm quá hạn 3 lần", null));
+        }
+
+        // Tự động phân phối bản sao vừa trả (Auto-allocation D5) và đồng bộ lại số lượng sách
+        assignReservedCopy(record.getBookId(), record.getCopyId());
+
+        synchronized (globalLock) {
+            List<Book> books = storage.loadBooks();
+            updatedBook = books.stream().filter(b -> b.getId() == record.getBookId()).findFirst().orElse(null);
+        }
+
+        addAudit(AuditAction.RETURN, studentId != null ? studentId : record.getStudentId(), "Trả sách bản sao: " + record.getCopyId());
+        publishEvent(new RealtimeEvent(EventType.BOOKS_CHANGED, null, "Cập nhật số lượng sách", updatedBook));
+        publishEvent(new RealtimeEvent(EventType.BORROW_CHANGED, record.getStudentId(), "Trả sách thành công", record));
+
+        return record;
     }
 
     // ==========================================
@@ -342,12 +361,24 @@ public class LibraryService {
     // ==========================================
 
     public BorrowRecord renewBook(String studentId, long borrowRecordId) throws LibraryException {
+        BorrowRecord record;
         synchronized (globalLock) {
+            List<User> users = storage.loadUsers();
+            User user = users.stream().filter(u -> u.getUsername().equalsIgnoreCase(studentId)).findFirst()
+                    .orElseThrow(() -> new LibraryException(ResponseStatus.NOT_FOUND, "Không tìm thấy thông tin sinh viên"));
+            if (user.isBlocked()) {
+                throw new LibraryException(ResponseStatus.BLOCKED, "Tài khoản đang bị khóa do vi phạm, không thể gia hạn");
+            }
+
             List<BorrowRecord> borrows = storage.loadBorrows();
-            BorrowRecord record = borrows.stream()
+            record = borrows.stream()
                     .filter(b -> b.getId() == borrowRecordId && b.getStudentId().equals(studentId))
                     .findFirst()
                     .orElseThrow(() -> new LibraryException(ResponseStatus.NOT_FOUND, "Không tìm thấy phiếu mượn"));
+
+            if (record.getStatus() == BorrowStatus.RETURNED) {
+                throw new LibraryException(ResponseStatus.ERROR, "Sách đã trả, không thể gia hạn");
+            }
 
             if (record.getStatus() == BorrowStatus.OVERDUE || record.getDueDate().isBefore(LocalDate.now())) {
                 throw new LibraryException(ResponseStatus.ERROR, "Sách đã quá hạn, không thể gia hạn");
@@ -368,25 +399,42 @@ public class LibraryService {
             record.setDueDate(record.getDueDate().plusDays(7));
             record.setRenewCount(record.getRenewCount() + 1);
             storage.saveBorrows(borrows);
-
-            addAudit(AuditAction.RENEW, studentId, "Gia hạn thêm 7 ngày (lần " + record.getRenewCount() + ") cho phiếu mượn " + borrowRecordId);
-            publishEvent(new RealtimeEvent(EventType.BORROW_CHANGED, studentId, "Gia hạn mượn thành công", record));
-
-            return record;
         }
+
+        addAudit(AuditAction.RENEW, studentId, "Gia hạn thêm 7 ngày (lần " + record.getRenewCount() + ") cho phiếu mượn " + borrowRecordId);
+        publishEvent(new RealtimeEvent(EventType.BORROW_CHANGED, studentId, "Gia hạn mượn thành công", record));
+
+        return record;
     }
 
     public ReservationRecord reserveBook(String studentId, int bookId) throws LibraryException {
         ReentrantLock lock = getLock(bookId);
         lock.lock();
         try {
+            ReservationRecord record;
+            String bookTitle;
             synchronized (globalLock) {
+                List<User> users = storage.loadUsers();
+                User user = users.stream().filter(u -> u.getUsername().equalsIgnoreCase(studentId)).findFirst()
+                        .orElseThrow(() -> new LibraryException(ResponseStatus.NOT_FOUND, "Không tìm thấy thông tin sinh viên"));
+                if (user.isBlocked()) {
+                    throw new LibraryException(ResponseStatus.BLOCKED, "Tài khoản đang bị khóa do vi phạm");
+                }
+
                 List<Book> books = storage.loadBooks();
                 Book book = books.stream().filter(b -> b.getId() == bookId).findFirst()
                         .orElseThrow(() -> new LibraryException(ResponseStatus.NOT_FOUND, "Không tìm thấy sách"));
 
                 if (book.getAvailableCopies() > 0) {
                     throw new LibraryException(ResponseStatus.ERROR, "Sách còn trong kho, không cần đặt trước");
+                }
+
+                List<BorrowRecord> borrows = storage.loadBorrows();
+                boolean currentlyBorrowing = borrows.stream()
+                        .anyMatch(b -> b.getBookId() == bookId && b.getStudentId().equalsIgnoreCase(studentId)
+                                && (b.getStatus() == BorrowStatus.BORROWING || b.getStatus() == BorrowStatus.OVERDUE));
+                if (currentlyBorrowing) {
+                    throw new LibraryException(ResponseStatus.ERROR, "Bạn đang mượn cuốn sách này rồi");
                 }
 
                 List<ReservationRecord> reservations = storage.loadReservations();
@@ -396,10 +444,11 @@ public class LibraryService {
                     throw new LibraryException(ResponseStatus.ERROR, "Bạn đã đặt trước sách này rồi");
                 }
 
-                ReservationRecord record = new ReservationRecord(
+                bookTitle = book.getTitle();
+                record = new ReservationRecord(
                         nextReservationId.incrementAndGet(),
                         bookId,
-                        book.getTitle(),
+                        bookTitle,
                         studentId,
                         LocalDateTime.now(),
                         null,
@@ -408,16 +457,18 @@ public class LibraryService {
                 );
                 reservations.add(record);
                 storage.saveReservations(reservations);
-
-                addAudit(AuditAction.RESERVE, studentId, "Đặt trước sách: " + book.getTitle());
-                return record;
             }
+
+            addAudit(AuditAction.RESERVE, studentId, "Đặt trước sách: " + bookTitle);
+            return record;
         } finally {
             lock.unlock();
         }
     }
 
     public void cancelReservation(String studentId, long reservationId) throws LibraryException {
+        int bookId;
+        String copyId;
         synchronized (globalLock) {
             List<ReservationRecord> reservations = storage.loadReservations();
             ReservationRecord record = reservations.stream()
@@ -430,16 +481,22 @@ public class LibraryService {
             }
 
             record.setStatus(ReservationStatus.CANCELLED);
-            String copyId = record.getAssignedCopyId();
+            bookId = record.getBookId();
+            copyId = record.getAssignedCopyId();
+            record.setAssignedCopyId(null);
+            expiringNotifiedIds.remove(record.getId());
             storage.saveReservations(reservations);
+        }
 
-            if (copyId != null) {
-                assignReservedCopy(record.getBookId(), copyId);
-            }
+        if (copyId != null) {
+            assignReservedCopy(bookId, copyId);
         }
     }
 
     public void assignReservedCopy(int bookId, String copyId) {
+        RealtimeEvent alertEvent = null;
+        RealtimeEvent booksChangedEvent = null;
+
         synchronized (globalLock) {
             List<ReservationRecord> reservations = storage.loadReservations();
             List<BookCopy> copies = storage.loadCopies();
@@ -455,31 +512,55 @@ public class LibraryService {
 
             if (nextInLine.isPresent()) {
                 ReservationRecord res = nextInLine.get();
-                res.setAssignedCopyId(copyId);
+                res.setAssignedCopyId(copy.getCopyId());
                 res.setExpiryDate(LocalDateTime.now().plusHours(48)); // Hạn giữ sách 48h
+                expiringNotifiedIds.remove(res.getId());
                 copy.setStatus(CopyStatus.RESERVED);
                 storage.saveReservations(reservations);
                 storage.saveCopies(copies);
 
-                publishEvent(new RealtimeEvent(
+                alertEvent = new RealtimeEvent(
                         EventType.RESERVATION_ALERT,
                         res.getStudentId(),
                         "Sách bạn đặt trước '" + res.getBookTitle() + "' đã có sẵn tại quầy! Vui lòng nhận trong 48h.",
                         res
-                ));
+                );
             } else {
                 copy.setStatus(CopyStatus.AVAILABLE);
                 storage.saveCopies(copies);
             }
+
+            // Đồng bộ lại availableCopies trong books.dat
+            List<Book> books = storage.loadBooks();
+            Book book = books.stream().filter(b -> b.getId() == bookId).findFirst().orElse(null);
+            if (book != null) {
+                int availableCount = (int) copies.stream()
+                        .filter(c -> c.getBookId() == bookId && c.getStatus() == CopyStatus.AVAILABLE)
+                        .count();
+                if (book.getAvailableCopies() != availableCount) {
+                    book.setAvailableCopies(availableCount);
+                    storage.saveBooks(books);
+                    booksChangedEvent = new RealtimeEvent(EventType.BOOKS_CHANGED, null, "Cập nhật số lượng sách", book);
+                }
+            }
+        }
+
+        if (alertEvent != null) {
+            publishEvent(alertEvent);
+        }
+        if (booksChangedEvent != null) {
+            publishEvent(booksChangedEvent);
         }
     }
 
     public void expireReservations() {
+        List<String> expiredCopyIds = new ArrayList<>();
+        Map<String, Integer> copyToBookId = new HashMap<>();
+        List<RealtimeEvent> expiringEvents = new ArrayList<>();
+
         synchronized (globalLock) {
             List<ReservationRecord> reservations = storage.loadReservations();
             LocalDateTime now = LocalDateTime.now();
-            List<String> expiredCopyIds = new ArrayList<>();
-            Map<String, Integer> copyToBookId = new HashMap<>();
 
             for (ReservationRecord r : reservations) {
                 if (r.getStatus() == ReservationStatus.PENDING && r.getAssignedCopyId() != null && r.getExpiryDate() != null) {
@@ -487,25 +568,34 @@ public class LibraryService {
                         r.setStatus(ReservationStatus.EXPIRED);
                         String copyId = r.getAssignedCopyId();
                         r.setAssignedCopyId(null);
+                        expiringNotifiedIds.remove(r.getId());
                         expiredCopyIds.add(copyId);
                         copyToBookId.put(copyId, r.getBookId());
                     } else if (now.plusHours(6).isAfter(r.getExpiryDate())) {
-                        publishEvent(new RealtimeEvent(
-                                EventType.HOLD_EXPIRING,
-                                r.getStudentId(),
-                                "Sách đặt trước '" + r.getBookTitle() + "' sắp hết hạn giữ (còn dưới 6 giờ)!",
-                                r
-                        ));
+                        // Chỉ phát cảnh báo HOLD_EXPIRING đúng 1 lần cho mỗi phiếu đặt trước
+                        if (expiringNotifiedIds.add(r.getId())) {
+                            expiringEvents.add(new RealtimeEvent(
+                                    EventType.HOLD_EXPIRING,
+                                    r.getStudentId(),
+                                    "Sách đặt trước '" + r.getBookTitle() + "' sắp hết hạn giữ (còn dưới 6 giờ)!",
+                                    r
+                            ));
+                        }
                     }
                 }
             }
 
             if (!expiredCopyIds.isEmpty()) {
                 storage.saveReservations(reservations);
-                for (String copyId : expiredCopyIds) {
-                    assignReservedCopy(copyToBookId.get(copyId), copyId);
-                }
             }
+        }
+
+        for (RealtimeEvent ev : expiringEvents) {
+            publishEvent(ev);
+        }
+
+        for (String copyId : expiredCopyIds) {
+            assignReservedCopy(copyToBookId.get(copyId), copyId);
         }
     }
 
@@ -527,18 +617,19 @@ public class LibraryService {
     }
 
     public User unblockUser(String username) throws LibraryException {
+        User user;
         synchronized (globalLock) {
             List<User> users = storage.loadUsers();
-            User user = users.stream().filter(u -> u.getUsername().equalsIgnoreCase(username)).findFirst()
+            user = users.stream().filter(u -> u.getUsername().equalsIgnoreCase(username)).findFirst()
                     .orElseThrow(() -> new LibraryException(ResponseStatus.NOT_FOUND, "Không tìm thấy người dùng: " + username));
 
             user.setBlocked(false);
             user.setViolationCount(0);
             storage.saveUsers(users);
-
-            addAudit(AuditAction.UNBLOCK, "admin", "Mở khóa tài khoản cho sinh viên: " + username);
-            return user;
         }
+
+        addAudit(AuditAction.UNBLOCK, "admin", "Mở khóa tài khoản cho sinh viên: " + username);
+        return user;
     }
 
     public void checkOverdue() {
@@ -559,12 +650,13 @@ public class LibraryService {
     }
 
     public Book addBook(String title, String author, String category, int publishYear, int copies) {
+        Book book;
         synchronized (globalLock) {
             List<Book> books = storage.loadBooks();
             int nextId = books.stream().mapToInt(Book::getId).max().orElse(0) + 1;
             int numCopies = Math.max(1, copies);
 
-            Book book = new Book(
+            book = new Book(
                     nextId,
                     "978-604-0-" + String.format("%02d", nextId),
                     title,
@@ -583,28 +675,71 @@ public class LibraryService {
             String prefix = String.format("BK%02d", nextId);
             for (int c = 1; c <= numCopies; c++) {
                 String copyId = String.format("%s-C%02d", prefix, c);
-                allCopies.add(new BookCopy(copyId, nextId, "BAR-" + copyId, "QR:" + copyId + ":" + title, CopyStatus.AVAILABLE));
+                String barcode = "BC-" + copyId;
+                String qrData = "LIB|" + copyId + "|" + barcode;
+                allCopies.add(new BookCopy(copyId, nextId, barcode, qrData, CopyStatus.AVAILABLE));
             }
             storage.saveCopies(allCopies);
-
-            publishEvent(new RealtimeEvent(EventType.BOOKS_CHANGED, null, "Thêm sách mới: " + title, book));
-            return book;
         }
+
+        publishEvent(new RealtimeEvent(EventType.BOOKS_CHANGED, null, "Thêm sách mới: " + title, book));
+        return book;
     }
 
-    public void updateBook(Book book) throws LibraryException {
+    public Book updateBook(int bookId, String title, String author, String category, int publishYear) throws LibraryException {
+        Book updated;
         synchronized (globalLock) {
             List<Book> books = storage.loadBooks();
+            Book existing = books.stream().filter(b -> b.getId() == bookId).findFirst()
+                    .orElseThrow(() -> new LibraryException(ResponseStatus.NOT_FOUND, "Không tìm thấy sách cần cập nhật"));
+
+            if (title != null && !title.isBlank()) existing.setTitle(title);
+            if (author != null && !author.isBlank()) existing.setAuthor(author);
+            if (category != null && !category.isBlank()) existing.setCategory(category);
+            if (publishYear > 0) existing.setPublishYear(publishYear);
+
+            storage.saveBooks(books);
+            updated = existing;
+        }
+        publishEvent(new RealtimeEvent(EventType.BOOKS_CHANGED, null, "Cập nhật thông tin sách: " + updated.getTitle(), updated));
+        return updated;
+    }
+
+    public Book updateBook(Book book) throws LibraryException {
+        if (book == null) {
+            throw new LibraryException(ResponseStatus.ERROR, "Thông tin sách không hợp lệ");
+        }
+        Book updated;
+        synchronized (globalLock) {
+            List<Book> books = storage.loadBooks();
+            Book existing = null;
             for (int i = 0; i < books.size(); i++) {
                 if (books.get(i).getId() == book.getId()) {
-                    books.set(i, book);
+                    existing = books.get(i);
+                    if (book.getIsbn() != null) existing.setIsbn(book.getIsbn());
+                    if (book.getTitle() != null) existing.setTitle(book.getTitle());
+                    if (book.getAuthor() != null) existing.setAuthor(book.getAuthor());
+                    if (book.getCategory() != null) existing.setCategory(book.getCategory());
+                    if (book.getPublishYear() > 0) existing.setPublishYear(book.getPublishYear());
+                    if (book.getTotalCopies() > 0) existing.setTotalCopies(book.getTotalCopies());
+                    if (book.getAvailableCopies() >= 0 && book.getTotalCopies() > 0) {
+                        existing.setAvailableCopies(book.getAvailableCopies());
+                    }
+                    if (book.getEbookFileName() != null) {
+                        existing.setHasEbook(book.isHasEbook());
+                        existing.setEbookFileName(book.getEbookFileName());
+                    }
                     storage.saveBooks(books);
-                    publishEvent(new RealtimeEvent(EventType.BOOKS_CHANGED, null, "Cập nhật thông tin sách: " + book.getTitle(), book));
-                    return;
+                    break;
                 }
             }
-            throw new LibraryException(ResponseStatus.NOT_FOUND, "Không tìm thấy sách cần cập nhật");
+            if (existing == null) {
+                throw new LibraryException(ResponseStatus.NOT_FOUND, "Không tìm thấy sách cần cập nhật");
+            }
+            updated = existing;
         }
+        publishEvent(new RealtimeEvent(EventType.BOOKS_CHANGED, null, "Cập nhật thông tin sách: " + updated.getTitle(), updated));
+        return updated;
     }
 
     public void deleteBook(int bookId) throws LibraryException {
@@ -622,37 +757,58 @@ public class LibraryService {
 
             // Xóa sách
             List<Book> books = storage.loadBooks();
-            books.removeIf(b -> b.getId() == bookId);
+            boolean removed = books.removeIf(b -> b.getId() == bookId);
+            if (!removed) {
+                throw new LibraryException(ResponseStatus.NOT_FOUND, "Không tìm thấy sách cần xóa");
+            }
             storage.saveBooks(books);
-
-            publishEvent(new RealtimeEvent(EventType.BOOKS_CHANGED, null, "Đã xóa sách ID " + bookId, null));
         }
+
+        publishEvent(new RealtimeEvent(EventType.BOOKS_CHANGED, null, "Đã xóa sách ID " + bookId, null));
     }
 
     public BookCopy addCopy(int bookId) throws LibraryException {
+        Book book;
+        BookCopy newCopy;
         synchronized (globalLock) {
             List<Book> books = storage.loadBooks();
-            Book book = books.stream().filter(b -> b.getId() == bookId).findFirst()
+            book = books.stream().filter(b -> b.getId() == bookId).findFirst()
                     .orElseThrow(() -> new LibraryException(ResponseStatus.NOT_FOUND, "Không tìm thấy sách"));
 
             List<BookCopy> copies = storage.loadCopies();
-            long count = copies.stream().filter(c -> c.getBookId() == bookId).count();
-            String copyId = String.format("BK%02d-C%02d", bookId, count + 1);
+            int maxIndex = copies.stream()
+                    .filter(c -> c.getBookId() == bookId && c.getCopyId() != null)
+                    .mapToInt(c -> {
+                        int idx = c.getCopyId().lastIndexOf("-C");
+                        if (idx >= 0) {
+                            try {
+                                return Integer.parseInt(c.getCopyId().substring(idx + 2));
+                            } catch (NumberFormatException ignored) {
+                            }
+                        }
+                        return 0;
+                    })
+                    .max()
+                    .orElse(0);
+            String copyId = String.format("BK%02d-C%02d", bookId, maxIndex + 1);
+            String barcode = "BC-" + copyId;
+            String qrData = "LIB|" + copyId + "|" + barcode;
 
-            BookCopy newCopy = new BookCopy(copyId, bookId, "BAR-" + copyId, "QR:" + copyId + ":" + book.getTitle(), CopyStatus.AVAILABLE);
+            newCopy = new BookCopy(copyId, bookId, barcode, qrData, CopyStatus.AVAILABLE);
             copies.add(newCopy);
             storage.saveCopies(copies);
 
             book.setTotalCopies(book.getTotalCopies() + 1);
             book.setAvailableCopies(book.getAvailableCopies() + 1);
             storage.saveBooks(books);
-
-            publishEvent(new RealtimeEvent(EventType.BOOKS_CHANGED, null, "Thêm bản sao cho sách: " + book.getTitle(), book));
-            return newCopy;
         }
+
+        publishEvent(new RealtimeEvent(EventType.BOOKS_CHANGED, null, "Thêm bản sao cho sách: " + book.getTitle(), book));
+        return newCopy;
     }
 
     public void removeCopy(String copyId) throws LibraryException {
+        Book updatedBook = null;
         synchronized (globalLock) {
             List<BookCopy> copies = storage.loadCopies();
             BookCopy copy = copies.stream().filter(c -> c.getCopyId().equalsIgnoreCase(copyId)).findFirst()
@@ -671,8 +827,12 @@ public class LibraryService {
                 book.setTotalCopies(Math.max(0, book.getTotalCopies() - 1));
                 book.setAvailableCopies(Math.max(0, book.getAvailableCopies() - 1));
                 storage.saveBooks(books);
-                publishEvent(new RealtimeEvent(EventType.BOOKS_CHANGED, null, "Xóa bản sao: " + copyId, book));
+                updatedBook = book;
             }
+        }
+
+        if (updatedBook != null) {
+            publishEvent(new RealtimeEvent(EventType.BOOKS_CHANGED, null, "Xóa bản sao: " + copyId, updatedBook));
         }
     }
 
@@ -681,9 +841,14 @@ public class LibraryService {
     }
 
     public BookCopy getCopyByBarcode(String barcode) {
-        if (barcode == null) return null;
+        if (barcode == null || barcode.isBlank()) return null;
+        String input = barcode.trim();
         return storage.loadCopies().stream()
-                .filter(c -> barcode.equalsIgnoreCase(c.getBarcode()) || barcode.equalsIgnoreCase(c.getCopyId()))
+                .filter(c -> input.equalsIgnoreCase(c.getBarcode())
+                        || input.equalsIgnoreCase(c.getCopyId())
+                        || input.equalsIgnoreCase(c.getQrData())
+                        || input.equalsIgnoreCase("BAR-" + c.getCopyId())
+                        || input.equalsIgnoreCase("BC-" + c.getCopyId()))
                 .findFirst()
                 .orElse(null);
     }
@@ -710,6 +875,10 @@ public class LibraryService {
 
     public List<User> getUsers() {
         return storage.loadUsers();
+    }
+
+    public User addUser(String username, String password, String fullName, String email) throws LibraryException {
+        return addUser(username, password, fullName, email, Role.STUDENT);
     }
 
     public User addUser(String username, String password, String fullName, String email, Role role) throws LibraryException {

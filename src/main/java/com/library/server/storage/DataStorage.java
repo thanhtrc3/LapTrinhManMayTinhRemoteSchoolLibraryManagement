@@ -221,8 +221,8 @@ public class DataStorage {
             String prefix = String.format("BK%02d", b);
             for (int c = 1; c <= 3; c++) {
                 String copyId = String.format("%s-C%02d", prefix, c);
-                String barcode = "BAR-" + copyId;
-                String qrData = "QR:" + copyId + ":" + titles[b - 1];
+                String barcode = "BC-" + copyId;
+                String qrData = "LIB|" + copyId + "|" + barcode;
                 list.add(new BookCopy(copyId, b, barcode, qrData, CopyStatus.AVAILABLE));
             }
         }

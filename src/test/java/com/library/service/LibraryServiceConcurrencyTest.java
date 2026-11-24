@@ -12,6 +12,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Path;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -86,14 +87,37 @@ public class LibraryServiceConcurrencyTest {
     @Test
     void testTwoDifferentBooksNotBlockingEachOther() throws Exception {
         ExecutorService executor = Executors.newFixedThreadPool(2);
-        Future<BorrowRecord> f1 = executor.submit(() -> service.borrowBook("sv001", 1, 14));
+        CountDownLatch lock1Held = new CountDownLatch(1);
+        CountDownLatch releaseLock1 = new CountDownLatch(1);
+
+        // Luồng 1 giữ khóa ReentrantLock của sách 1
+        Future<?> holder = executor.submit(() -> {
+            ReentrantLock lock1 = service.getLock(1);
+            lock1.lock();
+            try {
+                lock1Held.countDown();
+                releaseLock1.await(2, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                lock1.unlock();
+            }
+        });
+
+        assertTrue(lock1Held.await(1, TimeUnit.SECONDS));
+
+        // Khi sách 1 đang bị giữ khóa, luồng 2 mượn sách 2 vẫn chạy xong ngay lập tức mà không bị chặn
+        long startNs = System.nanoTime();
         Future<BorrowRecord> f2 = executor.submit(() -> service.borrowBook("sv002", 2, 14));
+        BorrowRecord r2 = f2.get(500, TimeUnit.MILLISECONDS);
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs);
 
-        BorrowRecord r1 = f1.get(2, TimeUnit.SECONDS);
-        BorrowRecord r2 = f2.get(2, TimeUnit.SECONDS);
-
-        assertNotNull(r1);
-        assertNotNull(r2);
+        releaseLock1.countDown();
+        holder.get(1, TimeUnit.SECONDS);
         executor.shutdown();
+
+        assertNotNull(r2);
+        assertEquals(2, r2.getBookId());
+        assertTrue(elapsedMs < 500, "Mượn sách 2 không được bị chặn bởi khóa của sách 1");
     }
 }

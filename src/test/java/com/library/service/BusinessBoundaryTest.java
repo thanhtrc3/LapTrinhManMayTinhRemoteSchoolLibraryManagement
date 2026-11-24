@@ -1,6 +1,8 @@
 package com.library.service;
 
 import com.library.common.model.*;
+import com.library.common.net.EventType;
+import com.library.common.net.RealtimeEvent;
 import com.library.common.net.ResponseStatus;
 import com.library.server.service.LibraryException;
 import com.library.server.service.LibraryService;
@@ -11,21 +13,12 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * D8 / C8: Kiểm thử toàn diện các ca biên nghiệp vụ:
- * 1. Hạn mức mượn tối đa 3 cuốn
- * 2. Khóa mượn khi tài khoản đang bị blocked
- * 3. Ngày mượn days = 0 và days = 99 bị kẹp trong giới hạn hợp lệ
- * 4. Gia hạn lần 3 bị chặn
- * 5. Đặt trước khi sách còn trong kho bị chặn
- * 6. Hủy đặt trước nhả bản sao cho người kế tiếp hoặc về AVAILABLE
- * 7. Quá hạn 3 lần -> tự động khóa tài khoản (3-strike)
- * 8. Mở khóa reset violationCount = 0 và blocked = false
- */
 public class BusinessBoundaryTest {
 
     @TempDir
@@ -51,14 +44,26 @@ public class BusinessBoundaryTest {
     }
 
     @Test
-    void testBoundaryBlockedUserCannotBorrow() throws LibraryException {
+    void testBoundaryBlockedUserCannotBorrowRenewOrReserve() throws LibraryException {
+        BorrowRecord r = service.borrowBook("sv001", 1, 14);
+        service.borrowBook("sv002", 2, 14);
+        service.borrowBook("sv003", 2, 14);
+        service.addUser("sv004", "123", "SV 4", "sv4@test.com");
+        service.borrowBook("sv004", 2, 14);
+
         List<User> users = storage.loadUsers();
         User u = users.stream().filter(x -> x.getUsername().equals("sv001")).findFirst().orElseThrow();
         u.setBlocked(true);
         storage.saveUsers(users);
 
-        LibraryException ex = assertThrows(LibraryException.class, () -> service.borrowBook("sv001", 1, 14));
-        assertEquals(ResponseStatus.BLOCKED, ex.getStatus());
+        LibraryException exBorrow = assertThrows(LibraryException.class, () -> service.borrowBook("sv001", 3, 14));
+        assertEquals(ResponseStatus.BLOCKED, exBorrow.getStatus());
+
+        LibraryException exRenew = assertThrows(LibraryException.class, () -> service.renewBook("sv001", r.getId()));
+        assertEquals(ResponseStatus.BLOCKED, exRenew.getStatus());
+
+        LibraryException exReserve = assertThrows(LibraryException.class, () -> service.reserveBook("sv001", 2));
+        assertEquals(ResponseStatus.BLOCKED, exReserve.getStatus());
     }
 
     @Test
@@ -71,13 +76,19 @@ public class BusinessBoundaryTest {
     }
 
     @Test
-    void testBoundaryRenewThirdTimeRejected() throws LibraryException {
+    void testBoundaryRenewThirdTimeAndReturnedBookRejected() throws LibraryException {
         BorrowRecord r = service.borrowBook("sv001", 1, 14);
         service.renewBook("sv001", r.getId());
         service.renewBook("sv001", r.getId());
 
         LibraryException ex = assertThrows(LibraryException.class, () -> service.renewBook("sv001", r.getId()));
         assertEquals(ResponseStatus.ERROR, ex.getStatus());
+
+        // Sau khi trả sách thì không được phép gia hạn phiếu đã trả
+        BorrowRecord r2 = service.borrowBook("sv002", 1, 14);
+        service.returnBook("sv002", r2.getCopyId());
+        LibraryException exReturned = assertThrows(LibraryException.class, () -> service.renewBook("sv002", r2.getId()));
+        assertEquals(ResponseStatus.ERROR, exReturned.getStatus());
     }
 
     @Test
@@ -87,7 +98,7 @@ public class BusinessBoundaryTest {
     }
 
     @Test
-    void testBoundaryCancelReservationReleasesCopy() throws LibraryException {
+    void testBoundaryCancelReservationReleasesCopyAndRestoresAvailableCopies() throws LibraryException {
         BorrowRecord r1 = service.borrowBook("sv001", 1, 14);
         service.borrowBook("sv002", 1, 14);
         service.borrowBook("sv003", 1, 14);
@@ -96,14 +107,46 @@ public class BusinessBoundaryTest {
         ReservationRecord res = service.reserveBook("sv004", 1);
 
         service.returnBook("sv001", r1.getCopyId());
-        // sv004 được gán bản sao này (status = RESERVED)
+        // sv004 được gán bản sao này (status = RESERVED), availableCopies vẫn = 0
         BookCopy copy = service.getCopies(1).stream().filter(c -> c.getCopyId().equals(r1.getCopyId())).findFirst().orElseThrow();
         assertEquals(CopyStatus.RESERVED, copy.getStatus());
+        assertEquals(0, service.searchBooks(null, null, false).stream().filter(b -> b.getId() == 1).findFirst().orElseThrow().getAvailableCopies());
 
-        // Hủy đặt trước -> bản sao phải trở lại AVAILABLE
+        // Hủy đặt trước -> bản sao trở lại AVAILABLE và availableCopies tăng lên 1
         service.cancelReservation("sv004", res.getId());
         BookCopy updatedCopy = service.getCopies(1).stream().filter(c -> c.getCopyId().equals(r1.getCopyId())).findFirst().orElseThrow();
         assertEquals(CopyStatus.AVAILABLE, updatedCopy.getStatus());
+        assertEquals(1, service.searchBooks(null, null, false).stream().filter(b -> b.getId() == 1).findFirst().orElseThrow().getAvailableCopies());
+    }
+
+    @Test
+    void testHoldExpiringNotificationSentOnlyOnce() throws LibraryException {
+        BorrowRecord r1 = service.borrowBook("sv001", 1, 14);
+        service.borrowBook("sv002", 1, 14);
+        service.borrowBook("sv003", 1, 14);
+
+        service.addUser("sv004", "123", "SV 4", "sv4@test.com");
+        ReservationRecord res = service.reserveBook("sv004", 1);
+        service.returnBook("sv001", r1.getCopyId());
+
+        // Chỉnh expiryDate còn 3 giờ (< 6 giờ)
+        List<ReservationRecord> allRes = storage.loadReservations();
+        ReservationRecord rsv = allRes.stream().filter(x -> x.getId() == res.getId()).findFirst().orElseThrow();
+        rsv.setExpiryDate(LocalDateTime.now().plusHours(3));
+        storage.saveReservations(allRes);
+
+        List<RealtimeEvent> expiringEvents = new ArrayList<>();
+        service.setPublisher(ev -> {
+            if (ev.getType() == EventType.HOLD_EXPIRING) {
+                expiringEvents.add(ev);
+            }
+        });
+
+        service.expireReservations();
+        service.expireReservations();
+        service.expireReservations();
+
+        assertEquals(1, expiringEvents.size(), "Cảnh báo HOLD_EXPIRING chỉ được gửi đúng 1 lần");
     }
 
     @Test
